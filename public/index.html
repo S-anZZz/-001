@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>add work · 在线求职招聘</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">add work <small>在线求职招聘系统</small></div>
+    <div class="user-box" id="userBox" style="display:none">
+      <span id="userLabel"></span>
+      <button class="ghost tiny" onclick="logout()">退出登录</button>
+    </div>
+  </header>
+
+  <div class="wrap" id="authWrap">
+    <div class="card">
+      <div class="card-head">登录 / 注册</div>
+      <div class="card-body">
+        <div id="authMsg"></div>
+        <div class="tabs">
+          <button id="tabLogin" class="active" onclick="switchAuth('login')">登录</button>
+          <button id="tabReg" onclick="switchAuth('register')">注册</button>
+        </div>
+
+        <form class="form" id="loginForm" onsubmit="login(event)">
+          <label>用户名</label><input type="text" id="loginUser" required>
+          <label>密码</label><input type="password" id="loginPwd" required>
+          <p><button type="submit">登录</button></p>
+        </form>
+
+        <form class="form" id="regForm" style="display:none" onsubmit="register(event)">
+          <div class="row">
+            <div>
+              <label>角色</label>
+              <select id="regRole">
+                <option value="seeker">求职者</option>
+                <option value="company">企业</option>
+              </select>
+            </div>
+            <div><label>姓名</label><input type="text" id="regName" required></div>
+          </div>
+          <div class="row">
+            <div><label>用户名</label><input type="text" id="regUser" required></div>
+            <div><label>密码</label><input type="password" id="regPwd" required></div>
+          </div>
+          <div class="row" id="companyFields" style="display:none">
+            <div><label>企业名称</label><input type="text" id="regCompany"></div>
+            <div><label>联系电话</label><input type="text" id="regPhone"></div>
+          </div>
+          <p><button type="submit">注册</button></p>
+        </form>
+        <p style="color:#666">管理员账号：admin / root123456（企业注册需管理员审核后才能登录）</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap" id="dashWrap" style="display:none">
+    <div class="tabs" id="dashTabs"></div>
+    <div id="dashPanels"></div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
