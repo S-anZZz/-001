@@ -2,11 +2,22 @@
 
 一款类似领英 / Boss / 猎聘的线上求职招聘系统：企业发布职位、求职者投递简历、搜索匹配。
 
+## 线上访问
+
+| 项目 | 地址 |
+| --- | --- |
+| 公网地址 | **https://addwork.us.ci** |
+| 部署方式 | Render 免费 Web 服务 + TiDB Cloud 免费 MySQL |
+| 部署文档 | [DEPLOY.md](./DEPLOY.md) |
+
+> 免费实例 15 分钟无流量会休眠，首次打开约需 1 分钟唤醒。
+
 ## 技术栈
 
 - 后端：Node.js + Express + MySQL（`mysql2` 异步驱动）
 - 前端：原生 HTML / CSS / JavaScript（黑白色块、Excel 表格风格、表单为主）
 - 数据存储：MySQL，库名 `add_work`
+- 部署：Render（Node 服务）+ TiDB Cloud（MySQL 协议兼容）+ 自定义域名 `addwork.us.ci`
 
 ## 功能
 
@@ -49,6 +60,7 @@
 - 投递表 `applications`：简历 ID、职位 ID、状态、匹配分、面试链接
 - 联系方式表 `contact_requests`
 - 通知表 `notifications`
+- 文件表 `files`：上传的头像与简历附件（`FILE_STORAGE=db` 时启用，保证实例重启后文件不丢）
 
 ## 环境要求
 
@@ -65,9 +77,21 @@
 - 密码：`808080`
 - 数据库：`add_work`
 
-可通过环境变量覆盖：`DB_HOST`、`DB_PORT`、`DB_USER`、`DB_PASSWORD`、`DB_NAME`。
+可通过环境变量覆盖：
 
-首次启动会自动建表并写入演示数据（管理员、演示企业、演示求职者、演示职位）。
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DB_HOST` | `127.0.0.1` | 数据库主机 |
+| `DB_PORT` | `3306` | 端口（TiDB Cloud 为 `4000`） |
+| `DB_USER` | `root` | 用户名 |
+| `DB_PASSWORD` | `808080` | 密码 |
+| `DB_NAME` | `add_work` | 库名 |
+| `DB_SSL` | 关闭 | `true` 启用 TLS 1.2+，云数据库必须开启 |
+| `FILE_STORAGE` | `disk` | `disk` 写本地目录；`db` 存进 `files` 表（PaaS 上必须用 `db`） |
+
+完整示例见 [.env.example](./.env.example)。
+
+首次启动会自动建库、建表并写入演示数据（管理员、演示企业、演示求职者、演示职位）。
 
 ## 启动
 
@@ -90,11 +114,15 @@ npm start
 
 ```
 server.js     后端服务与 API 路由
-db.js         MySQL 连接、建表与种子数据
+db.js         MySQL 连接、建库建表与种子数据
+storage.js    上传文件存储层（磁盘 / 数据库两种模式）
 match.js      匹配打分逻辑
 meeting.js    面试会议集成点（模拟实现）
 public/       前端页面（index.html / style.css / app.js）
-uploads/      简历附件与头像存储目录（不入仓库）
+uploads/      本地开发时的附件与头像目录（不入仓库）
+render.yaml   Render 蓝图，一键创建免费 Web 服务
+DEPLOY.md     公网部署步骤（数据库、Render、域名解析、排错）
+.env.example  环境变量示例
 ```
 
 ## 推送到 GitHub
@@ -103,3 +131,7 @@ uploads/      简历附件与头像存储目录（不入仓库）
 git remote add origin https://github.com/S-anZZz/-001.git
 git push -u origin main
 ```
+
+## 部署
+
+详见 [DEPLOY.md](./DEPLOY.md)：创建 TiDB Cloud 免费 MySQL → Render Blueprint 部署 → 绑定 `addwork.us.ci`。

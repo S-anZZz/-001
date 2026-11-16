@@ -1,0 +1,28 @@
+# Render Blueprint：一键把本仓库部署成免费的 Node Web 服务
+# 用法：Render Dashboard → New → Blueprint → 选择 S-anZZz/-001 仓库
+services:
+  - type: web
+    name: addwork
+    runtime: node
+    plan: free                      # 免费实例：512MB 内存 / 0.1 CPU，15 分钟无流量会休眠
+    region: singapore               # 新加坡节点，国内访问延迟较低
+    buildCommand: npm ci            # 按 package-lock.json 安装依赖，保证版本一致
+    startCommand: npm start         # 由 package.json 的 start 脚本启动 Express
+    healthCheckPath: /              # 健康检查打首页，通过后才会切流量到新实例
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: FILE_STORAGE
+        value: db                   # 文件存数据库，免费实例的磁盘重启后会清空
+      - key: DB_SSL
+        value: "true"               # 云数据库要求 TLS 加密连接
+      - key: DB_HOST
+        sync: false                 # 创建时手动填写：TiDB Cloud 的连接主机
+      - key: DB_PORT
+        sync: false                 # 创建时手动填写：TiDB Cloud 默认 4000
+      - key: DB_USER
+        sync: false                 # 创建时手动填写：形如 xxxxx.root
+      - key: DB_PASSWORD
+        sync: false                 # 创建时手动填写：TiDB Cloud 生成的密码
+      - key: DB_NAME
+        value: add_work             # 应用会自动建库建表，无需手工创建

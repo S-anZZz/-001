@@ -1,20 +1,25 @@
 const express = require('express');
 const path = require('path');
-const fs = require('fs');
 const { pool, init, hashPassword, newToken } = require('./db');
+const { putFile, getFile, MODE: FILE_MODE } = require('./storage');
 const { matchScore } = require('./match');
 const { createMeeting } = require('./meeting');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const uploadsDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(uploadsDir));
+
+// 上传文件访问路由：按文件名从存储层取内容，磁盘模式与数据库模式走同一入口
+app.get('/uploads/:file', (req, res) => {
+  getFile(req.params.file).then((buffer) => { // 从存储层读取文件内容
+    if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
+    res.type(path.extname(req.params.file) || 'bin'); // 按扩展名设置 Content-Type，浏览器才会正确渲染图片
+    res.send(buffer); // 输出文件二进制内容
+  }).catch(() => res.status(500).send('读取失败')); // 读取出错返回 500
+});
 
 function send(res, ok, data) {
   res.status(ok ? 200 : 400).json({ ok, data });
@@ -53,15 +58,14 @@ async function notify(userId, type, message) {
 // 允许上传的头像格式
 const AVATAR_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 
-// saveImage：把前端传来的 base64 头像保存到 uploads 目录，返回文件名
-function saveImage(name, base64) {
+// saveImage：把前端传来的 base64 头像写入存储层，返回文件名
+async function saveImage(name, base64) {
   if (!name) return null; // 未选择头像则跳过
   const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
   if (!AVATAR_EXT.includes(ext)) throw Object.assign(new Error('头像仅支持 png/jpg/gif/webp'), { status: 400 });
   const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
   const file = `${Date.now()}-${safe}`; // 生成唯一文件名，避免覆盖
-  fs.writeFileSync(path.join(uploadsDir, file), Buffer.from(base64, 'base64')); // 写入磁盘
-  return file;
+  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
 }
 
 app.post('/api/register', wrap(async (req, res) => {
@@ -82,7 +86,7 @@ app.post('/api/register', wrap(async (req, res) => {
   let avatarPath = null;
   if (avatarBase64) {
     try {
-      avatarPath = saveImage(avatarName, avatarBase64);
+      avatarPath = await saveImage(avatarName, avatarBase64); // 等待头像写入存储层完成
     } catch (e) {
       return send(res, false, e.message);
     }
@@ -130,14 +134,13 @@ app.get('/api/me', requireAuth(), wrap(async (req, res) => {
 const ALLOWED_EXT = ['pdf', 'doc', 'docx'];
 
 // saveAttachment：保存简历附件并返回文件名
-function saveAttachment(name, base64) {
+async function saveAttachment(name, base64) {
   if (!name) return null; // 未选择附件则跳过
   const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
   if (!ALLOWED_EXT.includes(ext)) throw Object.assign(new Error('仅支持 PDF / Word 附件'), { status: 400 });
   const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
   const file = `${Date.now()}-${safe}`; // 生成唯一文件名
-  fs.writeFileSync(path.join(uploadsDir, file), Buffer.from(base64, 'base64')); // 写入磁盘
-  return file; // 返回文件名
+  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
 }
 
 // 获取当前求职者的简历
@@ -153,7 +156,7 @@ app.post('/api/resume', requireAuth(['seeker']), wrap(async (req, res) => {
   let attachmentPath = null; // 附件保存路径
   if (attachmentBase64) { // 若上传了附件
     try {
-      attachmentPath = saveAttachment(attachmentName, attachmentBase64); // 保存附件
+      attachmentPath = await saveAttachment(attachmentName, attachmentBase64); // 等待附件写入存储层完成
     } catch (e) {
       return send(res, false, e.message); // 保存失败返回错误
     }
@@ -431,6 +434,7 @@ app.patch('/api/admin/users/:id/status', requireAuth(['admin']), wrap(async (req
 init().then(() => {
   app.listen(PORT, () => {
     console.log(`add-work 招聘系统已启动： http://localhost:${PORT}`); // 输出启动地址
+    console.log(`上传文件存储模式： ${FILE_MODE}`); // 输出当前存储模式，便于排查文件丢失问题
   });
 }).catch((err) => {
   console.error('数据库初始化失败：', err.message); // 输出初始化错误

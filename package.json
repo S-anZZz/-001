@@ -1,8 +1,11 @@
 {
   "name": "add-work",
   "version": "0.1.0",
-  "description": "在线求职招聘系统 - 企业发布职位、求职者投递简历、搜索匹配",
+  "description": "在线求职招聘系统 - 企业发布职位、求职者投递简历、搜索匹配（已适配 Render + TiDB Cloud 免费部署）",
   "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"

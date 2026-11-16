@@ -2,6 +2,9 @@
 const mysql = require('mysql2/promise'); // mysql2 异步驱动，提供 Promise 版查询接口
 const crypto = require('crypto'); // 加密工具，用于生成密码哈希与登录令牌
 
+// 是否启用 TLS：云数据库（TiDB Cloud 等）要求加密连接，本地 MySQL 默认关闭
+const DB_SSL = String(process.env.DB_SSL || '').toLowerCase() === 'true';
+
 // 数据库连接配置，默认使用 AGENTS.md 指定的 root 账号
 const DB_CONFIG = {
   host: process.env.DB_HOST || '127.0.0.1', // 主机地址，默认本机
@@ -13,11 +16,30 @@ const DB_CONFIG = {
   charset: 'utf8mb4' // 字符集，支持中文
 };
 
-// 创建 MySQL 连接池，供所有路由复用
+// 需要加密时补充 ssl 选项，最低 TLS 1.2（TiDB Cloud 只接受 1.2 / 1.3）
+if (DB_SSL) DB_CONFIG.ssl = { minVersion: 'TLSv1.2' };
+
+// 创建 MySQL 连接池，供所有路由复用（连接是懒建立的，此时不会真正联网）
 const pool = mysql.createPool(DB_CONFIG);
 
-// 初始化函数：建表并写入演示数据
+// ensureDatabase：连接时先不指定库名，确认目标库存在，不存在就建
+// 云数据库首次使用时通常只有 test 库，这一步省去手工建库
+async function ensureDatabase() {
+  const { database, ...bareConfig } = DB_CONFIG; // 去掉 database 字段，先连到服务器而非具体库
+  const conn = await mysql.createConnection(bareConfig); // 建立一条临时连接
+  try {
+    await conn.query(
+      `CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci` // 建库语句，存在则跳过
+    );
+  } finally {
+    await conn.end(); // 无论成功与否都关闭这条临时连接
+  }
+}
+
+// 初始化函数：建库、建表并写入演示数据
 async function init() {
+  await ensureDatabase(); // 先确保目标数据库存在，否则后续建表会失败
+
   // users 表：用户表，区分求职者/企业/管理员三种角色
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -103,6 +125,16 @@ async function init() {
       user_id INT NOT NULL,
       type VARCHAR(32) NOT NULL,
       message TEXT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+  // files 表：上传文件表，存头像与简历附件（FILE_STORAGE=db 时使用，避免实例重启丢文件）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS files (
+      name VARCHAR(255) PRIMARY KEY,
+      mime VARCHAR(128),
+      size INT,
+      data LONGBLOB,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
