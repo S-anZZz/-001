@@ -69,14 +69,16 @@ async function saveImage(name, base64) {
 }
 
 app.post('/api/register', wrap(async (req, res) => {
-  // 解析注册参数：用户名、密码、角色、姓名、企业名、电话、头像
-  const { username, password, role, name, companyName, phone, avatarName, avatarBase64 } = req.body || {};
+  // 解析注册参数：用户名、密码、角色、姓名、企业名、电话、头像、经营许可证
+  const { username, password, role, name, companyName, phone, avatarName, avatarBase64, licenseName, licenseBase64 } = req.body || {};
   // 必填项校验：用户名、密码、姓名不能为空
   if (!username || !password || !name) return send(res, false, '用户名、密码、姓名必填');
   // 密码长度校验：4~8 位之间
   if (password.length < 4 || password.length > 8) return send(res, false, '密码需为 4~8 位');
   // 角色校验：只允许求职者或企业
   if (!['seeker', 'company'].includes(role)) return send(res, false, '角色不合法');
+  // 企业注册必须填写企业名称，否则无法区分招聘主体
+  if (role === 'company' && !String(companyName || '').trim()) return send(res, false, '请填写企业名称');
   // 查询用户名是否已存在
   const [rows] = await pool.query('SELECT id FROM users WHERE username = ?', [username]);
   if (rows.length) return send(res, false, '用户名已存在');
@@ -91,19 +93,28 @@ app.post('/api/register', wrap(async (req, res) => {
       return send(res, false, e.message);
     }
   }
+  // 保存企业经营许可证（可选，仅企业角色）
+  let licensePath = null;
+  if (role === 'company' && licenseBase64) {
+    try {
+      licensePath = await saveLicense(licenseName, licenseBase64); // 等待许可证写入存储层完成
+    } catch (e) {
+      return send(res, false, e.message);
+    }
+  }
   // 插入用户记录
   const [info] = await pool.query(
-    `INSERT INTO users (username, password, role, name, company_name, phone, status, avatar_path)
-     VALUES (?,?,?,?,?,?,?,?)`,
-    [username, hashPassword(password), role, name, companyName || null, phone || null, status, avatarPath]
+    `INSERT INTO users (username, password, role, name, company_name, phone, status, avatar_path, license_path)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [username, hashPassword(password), role, name, companyName || null, phone || null, status, avatarPath, licensePath]
   );
   // 查询新用户信息返回给前端
   const [users] = await pool.query(
-    'SELECT id, username, role, name, company_name, phone, status, avatar_path FROM users WHERE id = ?',
+    'SELECT id, username, role, name, company_name, phone, status, avatar_path, license_path FROM users WHERE id = ?',
     [info.insertId]
   );
-  // 返回注册结果提示
-  send(res, true, { user: users[0], message: role === 'company' ? '注册成功，等待管理员审核' : '注册成功，请登录' });
+  // 返回注册结果提示：企业需要等待管理员审核，求职者可直接登录
+  send(res, true, { user: users[0], message: role === 'company' ? '注册成功，请等待管理员审核' : '注册成功，请登录' });
 }));
 
 app.post('/api/login', wrap(async (req, res) => {
@@ -140,6 +151,19 @@ async function saveAttachment(name, base64) {
   if (!ALLOWED_EXT.includes(ext)) throw Object.assign(new Error('仅支持 PDF / Word 附件'), { status: 400 });
   const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
   const file = `${Date.now()}-${safe}`; // 生成唯一文件名
+  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
+}
+
+// 企业经营许可证允许的格式：PDF、Word 与图片
+const LICENSE_EXT = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg'];
+
+// saveLicense：保存企业注册时上传的经营许可证并返回文件名
+async function saveLicense(name, base64) {
+  if (!name) return null; // 未上传许可证则跳过
+  const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
+  if (!LICENSE_EXT.includes(ext)) throw Object.assign(new Error('经营许可证仅支持 PDF / Word / 图片'), { status: 400 });
+  const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
+  const file = `${Date.now()}-license-${safe}`; // 生成唯一文件名，避免覆盖
   return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
 }
 
@@ -202,31 +226,31 @@ app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
   send(res, true, rows); // 返回职位列表
 }));
 
-// 企业端：发布新职位，状态为待审核
+// 企业端：发布新职位，直接进入职位库（按最新需求，发布无需管理员审核）
 app.post('/api/jobs', requireAuth(['company']), wrap(async (req, res) => {
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析职位参数
   if (!title) return send(res, false, '职位标题必填'); // 标题必填校验
   const [info] = await pool.query(
     `INSERT INTO jobs (company_id, title, requirements, location, salary_min, salary_max, education, experience, status)
-     VALUES (?,?,?,?,?,?,?,?, 'pending')`,
+     VALUES (?,?,?,?,?,?,?,?, 'published')`,
     [req.user.id, title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '']
-  ); // 插入职位，状态为待审核
-  send(res, true, { id: info.insertId, message: '职位已提交，等待管理员审核' }); // 返回提示
+  ); // 插入职位，状态直接为已发布
+  send(res, true, { id: info.insertId, message: '职位已发布' }); // 返回提示
 }));
 
-// 企业端：编辑职位，修改后重新进入审核
+// 企业端：编辑职位，修改后立即生效（无需重新审核）
 app.patch('/api/jobs/:id', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
   const job = rows[0]; // 取职位
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
-  if (['pending', 'rejected'].includes(job.status)) return send(res, false, '职位处于审核中或未通过，不能修改'); // 审核中/未通过不可改
+  if (job.status === 'unpublished') return send(res, false, '职位已下架，请先重新上架后再修改'); // 已下架职位不可直接修改
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析修改内容
   await pool.query(
-    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?, status='pending'
+    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?, status='published'
      WHERE id=?`,
     [title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '', req.params.id]
-  ); // 更新职位并重置为待审核
-  send(res, true, '职位已更新，重新进入审核'); // 返回提示
+  ); // 更新职位内容并保持已发布状态
+  send(res, true, '职位已更新'); // 返回提示
 }));
 
 // 企业端：下架职位
@@ -236,23 +260,6 @@ app.patch('/api/jobs/:id/unpublish', requireAuth(['company']), wrap(async (req, 
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
   await pool.query("UPDATE jobs SET status='unpublished' WHERE id=?", [req.params.id]); // 置为已下架
   send(res, true, '职位已下架'); // 返回提示
-}));
-
-// 管理员：审核通过职位，发布上线
-app.post('/api/jobs/:id/approve', requireAuth(['admin']), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
-  if (!rows[0]) return send(res, false, '职位不存在'); // 校验存在性
-  if (rows[0].status !== 'pending') return send(res, false, '该职位当前无需审核'); // 仅审核中职位可操作
-  await pool.query("UPDATE jobs SET status='published' WHERE id=?", [req.params.id]); // 置为已发布
-  send(res, true, '职位已通过审核并发布'); // 返回提示
-}));
-
-// 管理员：驳回职位
-app.post('/api/jobs/:id/reject', requireAuth(['admin']), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
-  if (!rows[0]) return send(res, false, '职位不存在'); // 校验存在性
-  await pool.query("UPDATE jobs SET status='rejected' WHERE id=?", [req.params.id]); // 置为未通过
-  send(res, true, '职位未通过审核'); // 返回提示
 }));
 
 // 求职者：投递职位，计算匹配分并生成匹配理由
@@ -400,15 +407,6 @@ app.post('/api/admin/companies/:id/approve', requireAuth(['admin']), wrap(async 
   await pool.query("UPDATE users SET status='active' WHERE id=?", [req.params.id]); // 置为已通过
   await notify(req.params.id, 'approve', '企业注册已通过审核，可以登录并发布职位'); // 通知企业
   send(res, true, '企业注册已通过'); // 返回提示
-}));
-
-// 管理员：查看待审核职位（未发布的职位）
-app.get('/api/admin/jobs', requireAuth(['admin']), wrap(async (req, res) => {
-  const [rows] = await pool.query(
-    `SELECT j.*, u.name AS company_name, u.company_name AS company
-     FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status != 'published' ORDER BY j.id DESC`
-  ); // 查询非发布状态的职位
-  send(res, true, rows); // 返回待审核职位
 }));
 
 // 管理员：查看全部用户

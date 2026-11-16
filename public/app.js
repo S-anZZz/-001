@@ -9,7 +9,11 @@ async function api(path, options = {}) {
   if (token) headers['Authorization'] = 'Bearer ' + token; // 携带令牌
   const res = await fetch(path, { ...options, headers }); // 发起请求
   const data = await res.json().catch(() => ({})); // 解析响应
-  if (!res.ok || !data.ok) throw new Error(data.message || '请求失败'); // 错误时抛出
+  if (!res.ok || !data.ok) {
+    // 后端错误统一放在 data.data 里（字符串），优先展示它，避免只看到“请求失败”
+    const msg = typeof data.data === 'string' ? data.data : (data.message || '请求失败');
+    throw new Error(msg);
+  }
   return data.data; // 返回数据
 }
 
@@ -40,6 +44,13 @@ async function login(e) {
   } catch (err) { showMsg(err.message, true); } // 错误提示
 }
 
+// toggleCompanyFields：选择角色后显示或隐藏企业专属字段
+function toggleCompanyFields() {
+  const isCompany = document.getElementById('regRole').value === 'company'; // 是否选择了企业
+  document.getElementById('companyFields').style.display = isCompany ? 'flex' : 'none'; // 企业名称与电话
+  document.getElementById('licenseField').style.display = isCompany ? 'flex' : 'none'; // 经营许可证上传
+}
+
 // register：注册处理，校验密码后提交注册
 async function register(e) {
   e.preventDefault(); // 阻止表单默认提交
@@ -62,6 +73,13 @@ async function register(e) {
       avatarName = avatarFile.name; // 记录文件名
       avatarBase64 = await readFileAsBase64(avatarFile); // 转 base64
     }
+    // 读取企业经营许可证并转为 base64（可选，仅企业角色）
+    let licenseBase64 = null, licenseName = null;
+    const licenseFile = document.getElementById('regLicense').files[0]; // 获取许可证文件
+    if (role === 'company' && licenseFile) {
+      licenseName = licenseFile.name; // 记录文件名
+      licenseBase64 = await readFileAsBase64(licenseFile); // 转 base64
+    }
     const d = await api('/api/register', {
       method: 'POST',
       body: JSON.stringify({
@@ -69,10 +87,16 @@ async function register(e) {
         name: regName.value,
         companyName: role === 'company' ? regCompany.value : null, // 企业角色传企业名
         phone: regPhone.value,
-        avatarName, avatarBase64 // 传递头像
+        avatarName, avatarBase64, // 传递头像
+        licenseName, licenseBase64 // 传递经营许可证
       })
     });
-    showMsg(d.message + '，请登录', false); // 显示注册结果
+    if (role === 'company') {
+      // 企业账号需管理员审核，停留在当前页并提示等待审核
+      showMsg(d.message || '注册成功，请等待管理员审核', false);
+      return;
+    }
+    showMsg(d.message + '，请登录', false); // 求职者注册成功，提示登录
     setTimeout(() => switchAuth('login'), 1200); // 切换回登录页
   } catch (err) { showMsg(err.message, true); } // 错误提示
 }
@@ -128,7 +152,6 @@ const ROLE_TABS = {
   admin: [
     { id: 'home', name: '工作台' },
     { id: 'companies', name: '企业审核' },
-    { id: 'jobs', name: '职位审核' },
     { id: 'users', name: '用户管理' }
   ]
 };
@@ -159,8 +182,8 @@ PANELS.home = async (p) => {
         <p>欢迎，<b>${esc(user.name)}</b>。当前角色：<b>${
           { seeker: '求职者', company: '企业', admin: '管理员' }[user.role]}</b>。</p>
         ${user.role === 'seeker' ? '<p class="match">提示：先完善简历，再搜索职位并投递，系统会按技能标签给出匹配分与匹配理由。</p>' : ''}
-        ${user.role === 'company' ? '<p class="match">提示：企业注册通过审核后即可发布职位；职位发布与修改均需管理员审核。</p>' : ''}
-        ${user.role === 'admin' ? '<p class="match">提示：审核企业注册申请与职位发布，管理用户账号。</p>' : ''}
+        ${user.role === 'company' ? '<p class="match">提示：企业注册通过审核后即可登录；职位发布与修改无需管理员审核，提交后立即进入职位库。</p>' : ''}
+        ${user.role === 'admin' ? '<p class="match">提示：审核企业注册申请，管理用户账号。</p>' : ''}
       </div>
     </div>`;
 };
@@ -400,7 +423,7 @@ async function companyJobs(p) {
                   <select id="jExp"><option value="">不限</option><option>应届生</option><option>1-3年</option><option>3-5年</option><option>5-10年</option></select>
                 </div>
               </div>
-              <p><button type="submit" id="jobSubmit">提交（需管理员审核）</button></p>
+              <p><button type="submit" id="jobSubmit">发布职位</button></p>
             </form>
           </div>
         </div>
@@ -431,7 +454,7 @@ async function saveJob(e) {
   try {
     if (editingJobId) {
       await api(`/api/jobs/${editingJobId}`, { method: 'PATCH', body: JSON.stringify(body) });
-      document.getElementById('jobMsg').innerHTML = '<div class="msg">职位已更新，重新进入审核</div>';
+      document.getElementById('jobMsg').innerHTML = '<div class="msg">职位已更新</div>';
     } else {
       const d = await api('/api/jobs', { method: 'POST', body: JSON.stringify(body) });
       document.getElementById('jobMsg').innerHTML = `<div class="msg">${esc(d.message)}</div>`;
@@ -453,7 +476,7 @@ function editJob(id) {
       document.getElementById('jSalMax').value = job.salary_max || '';
       document.getElementById('jEdu').value = job.education || '';
       document.getElementById('jExp').value = job.experience || '';
-      document.getElementById('jobSubmit').textContent = '保存修改（重新审核）';
+      document.getElementById('jobSubmit').textContent = '保存修改';
       toggleJobForm();
     });
 }
@@ -469,12 +492,10 @@ function renderJobsTable(jobs) {
           <td><b>${esc(j.title)}</b></td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
-          <td><span class="badge">${{ pending: '审核中', rejected: '未通过', unpublished: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
+          <td><span class="badge">${{ unpublished: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
           <td>
-            ${['published', 'unpublished'].includes(j.status)
-              ? `<button class="tiny" onclick="editJob(${j.id})">编辑</button>
-                 <button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>`
-              : `<span class="match">${j.status === 'pending' ? '等待审核' : '修改后重新提交'}</span>`}
+            <button class="tiny" onclick="editJob(${j.id})">编辑</button>
+            <button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>
           </td>
         </tr>`).join('')}
     </table>`;
@@ -487,7 +508,7 @@ async function unpublishJob(id) {
   } catch (err) { alert(err.message); }
 }
 
-PANELS.jobs = (p) => user.role === 'seeker' ? seekerJobs(p) : user.role === 'admin' ? adminJobs(p) : companyJobs(p);
+PANELS.jobs = (p) => user.role === 'seeker' ? seekerJobs(p) : companyJobs(p);
 PANELS.apps = async (p) => {
   const apps = await api('/api/applications/received');
   p.innerHTML = `
@@ -569,41 +590,6 @@ async function approveCompany(id) {
     await api(`/api/admin/companies/${id}/approve`, { method: 'POST' });
     await openTab('companies');
   } catch (err) { alert(err.message); }
-}
-
-PANELS.adminJobs = async (p) => {
-  const list = await api('/api/admin/jobs');
-  p.innerHTML = `
-    <div class="card">
-      <div class="card-head">职位发布审核</div>
-      <div class="card-body">
-        ${list.length ? `
-        <table class="grid">
-          <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>状态</th><th>操作</th></tr>
-          ${list.map((j) => `
-            <tr>
-              <td><b>${esc(j.title)}</b></td>
-              <td>${esc(j.company_name)}</td>
-              <td>${esc(j.location)}</td>
-              <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
-              <td><span class="badge">${{ pending: '审核中', rejected: '未通过', unpublished: '已下架' }[j.status] || j.status}</span></td>
-              <td>
-                <button class="tiny" onclick="approveJob(${j.id})">通过</button>
-                <button class="tiny ghost" onclick="rejectJob(${j.id})">不通过</button>
-              </td>
-            </tr>`).join('')}
-        </table>` : '<div class="empty">没有待审核的职位（已发布的职位不在此处显示）</div>'}
-      </div>
-    </div>`;
-};
-
-async function approveJob(id) {
-  try { await api(`/api/jobs/${id}/approve`, { method: 'POST' }); await openTab('jobs'); }
-  catch (err) { alert(err.message); }
-}
-async function rejectJob(id) {
-  try { await api(`/api/jobs/${id}/reject`, { method: 'POST' }); await openTab('jobs'); }
-  catch (err) { alert(err.message); }
 }
 
 PANELS.users = async (p) => {

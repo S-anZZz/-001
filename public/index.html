@@ -36,12 +36,12 @@
           <div class="row">
             <div>
               <label>角色</label>
-              <select id="regRole">
+              <select id="regRole" onchange="toggleCompanyFields()">
                 <option value="seeker">求职者</option>
                 <option value="company">企业</option>
               </select>
             </div>
-            <div><label>姓名</label><input type="text" id="regName" required></div>
+            <div><label>姓名（企业填联系人）</label><input type="text" id="regName" required></div>
           </div>
           <div class="row">
             <div><label>用户名</label><input type="text" id="regUser" required></div>
@@ -55,14 +55,13 @@
             <div><label>企业名称</label><input type="text" id="regCompany"></div>
             <div><label>联系电话</label><input type="text" id="regPhone"></div>
           </div>
+          <div class="row" id="licenseField" style="display:none">
+            <div><label>经营许可证（可选）</label><input type="file" id="regLicense" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"></div>
+            <div><label>说明</label><input type="text" value="企业注册提交后需等待管理员审核" disabled></div>
+          </div>
           <p><button type="submit">注册</button></p>
         </form>
-        <p style="color:#666">管理员账号：admin </p>
-        <p style="color:#666">密码root123456（企业注册需管理员审核后才能登录）</p>
-        <p style="color:#666">傻鸟：赵依帆</p>
-        <a1>
-          傻鸟：依帆
-        </a1>
+        <p style="color:#666">管理员账号：admin ／ 密码：root123456（企业注册需管理员审核后才能登录）</p>
       </div>
     </div>
   </div>

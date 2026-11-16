@@ -53,6 +53,7 @@ async function init() {
       status VARCHAR(16) NOT NULL DEFAULT 'active',
       token VARCHAR(128),
       avatar_path VARCHAR(255),
+      license_path VARCHAR(255),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -140,6 +141,8 @@ async function init() {
 
   // 兼容旧库：若 users 表缺少头像字段，则补充
   await ensureColumn('users', 'avatar_path', "ADD COLUMN avatar_path VARCHAR(255)");
+  // 兼容旧库：若 users 表缺少经营许可证字段，则补充
+  await ensureColumn('users', 'license_path', "ADD COLUMN license_path VARCHAR(255)");
 
   await seed(); // 写入演示数据
 }
