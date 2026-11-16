@@ -746,6 +746,34 @@ async function toggleFollow(companyId) {
   } catch (err) { alert(err.message); }
 }
 
+// previewAttachment：企业端预览候选人附件（PDF/图片可内嵌，Word 提示下载）
+function previewAttachment(name, path) {
+  const url = '/uploads/' + encodeURIComponent(path);
+  const isPdf = /\.pdf$/i.test(path);
+  const isImg = /\.(png|jpe?g|gif|webp)$/i.test(path);
+  if (!isPdf && !isImg) { // Word 等格式无法在线预览
+    if (confirm('该文件格式不支持在线预览，是否下载？')) window.open(url, '_blank');
+    return;
+  }
+  const mask = document.createElement('div');
+  mask.className = 'chat-mask';
+  mask.id = 'attachMask';
+  mask.innerHTML = `
+    <div class="chat-box" style="width:820px;height:86vh">
+      <div class="chat-head"><b>${esc(name || '附件预览')}</b>
+        <span>
+          <a class="file" href="${url}" download>下载</a>
+          <button class="tiny ghost" onclick="document.getElementById('attachMask').remove()">关闭</button>
+        </span></div>
+      <div class="chat-body" style="padding:0;max-height:none;flex:1;background:#f0f0f0">
+        ${isPdf
+          ? `<iframe src="${url}#toolbar=1" style="width:100%;height:100%;border:0"></iframe>`
+          : `<img src="${url}" style="max-width:100%;display:block;margin:0 auto">`}
+      </div>
+    </div>`;
+  document.body.appendChild(mask); // 挂载预览弹窗
+}
+
 // previewResume：新窗口打开可打印的简历预览（也可直接另存为 PDF）
 async function previewResume(id) {
   const list = await api('/api/resumes');
@@ -1363,7 +1391,12 @@ PANELS.apps = async (p) => {
             <tr>
               <td><b>${esc(a.candidate)}</b></td>
               <td>${esc(a.job_title)}</td>
-              <td>${fileLink(a.attachment_name, a.attachment_path, a.attachment_exists)}</td>
+              <td>${a.attachment_path
+                ? (a.attachment_exists === false
+                    ? '<span class="match">附件已失效</span>'
+                    : `<button class="tiny" onclick="previewAttachment('${esc(a.attachment_name || '')}', '${esc(a.attachment_path)}')">预览</button>
+                       <a class="file" href="/uploads/${encodeURIComponent(a.attachment_path)}" download>下载</a>`)
+                : '<span class="match">未上传</span>'}</td>
               <td>${esc(a.skills)}</td>
               <td>${esc(a.experience)}</td>
               <td>${esc(a.education)}</td>

@@ -12,11 +12,16 @@ const PORT = process.env.PORT || 3000;
 app.disable('x-powered-by');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Content-Security-Policy',
+  // PDF / 图片 / 文档等文件响应不能带 CSP，否则浏览器会认为内嵌插件被禁止，直接变成下载而不是预览
+  const isFile = req.path.startsWith('/uploads/') ||
+    /\.(pdf|png|jpe?g|gif|webp|docx?|xlsx?|zip)$/i.test(req.path);
+  if (!isFile) {
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN'); // 允许同源 iframe 预览
     // 前端大量使用内联 onclick，script-src 必须允许 'unsafe-inline'，否则按钮全部失效
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'");
+    res.setHeader('Content-Security-Policy',
+      "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'self'; frame-src 'self'; base-uri 'none'");
+  }
   next();
 });
 
