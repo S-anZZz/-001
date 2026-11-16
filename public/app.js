@@ -17,6 +17,13 @@ async function api(path, options = {}) {
   return data.data; // 返回数据
 }
 
+// fileLink：把 /uploads 下的文件名渲染成可点击的附件链接（自动处理中文与空格）
+function fileLink(name, path) {
+  if (!path) return '<span class="match">未上传</span>'; // 没有附件
+  const label = esc(name || path); // 展示用的文件名
+  return `<a class="file" href="/uploads/${encodeURIComponent(path)}" target="_blank" rel="noopener">📎 ${label}</a>`;
+}
+
 // timeFmt：把后端返回的 ISO 时间转成本地可读格式（避免直接显示 UTC 的 T 格式）
 function timeFmt(v) {
   if (!v) return ''; // 空值直接返回
@@ -219,7 +226,7 @@ PANELS.resume = async (p) => {
           <textarea id="rExp" placeholder="如：5年前端开发经验">${esc(r && r.experience)}</textarea>
           <label>附件（PDF / Word）</label>
           <input type="file" id="rFile" accept=".pdf,.doc,.docx">
-          ${r && r.attachment_name ? `<p class="match">已上传附件：${esc(r.attachment_name)}，重新选择文件将替换。</p>` : ''}
+          ${r && r.attachment_name ? `<p class="match">已上传附件：${fileLink(r.attachment_name, r.attachment_path)}（重新选择文件将替换）</p>` : ''}
           <p><button type="submit">保存简历</button></p>
         </form>
       </div>
@@ -672,11 +679,12 @@ PANELS.apps = async (p) => {
         <div id="appsMsg"></div>
         ${apps.length ? `
         <table class="grid">
-          <tr><th>候选人</th><th>投递职位</th><th>技能标签</th><th>经验</th><th>学历</th><th>匹配分</th><th>匹配理由</th><th>状态</th><th>操作</th></tr>
+          <tr><th>候选人</th><th>投递职位</th><th>简历附件</th><th>技能标签</th><th>经验</th><th>学历</th><th>匹配分</th><th>匹配理由</th><th>状态</th><th>操作</th></tr>
           ${apps.map((a) => `
             <tr>
               <td><b>${esc(a.candidate)}</b></td>
               <td>${esc(a.job_title)}</td>
+              <td>${fileLink(a.attachment_name, a.attachment_path)}</td>
               <td>${esc(a.skills)}</td>
               <td>${esc(a.experience)}</td>
               <td>${esc(a.education)}</td>

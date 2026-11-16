@@ -188,3 +188,10 @@ a { color: inherit; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; }
 .msg.unread { background: #fffdf0; border-left-color: #000; }
 .msg.unread b::after { content: ' · 新'; font-size: 11px; font-weight: normal; color: var(--muted); }
+
+/* ---------- 附件链接 ---------- */
+a.file {
+  display: inline-block; padding: 2px 6px; border: 1px solid var(--line);
+  text-decoration: none; font-size: 12px; background: #fff;
+}
+a.file:hover { background: var(--head); color: var(--head-ink); }

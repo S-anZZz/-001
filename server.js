@@ -16,7 +16,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/uploads/:file', (req, res) => {
   getFile(req.params.file).then((buffer) => { // 从存储层读取文件内容
     if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
-    res.type(path.extname(req.params.file) || 'bin'); // 按扩展名设置 Content-Type，浏览器才会正确渲染图片
+    const ext = path.extname(req.params.file).toLowerCase(); // 取扩展名
+    res.type(ext || 'bin'); // 按扩展名设置 Content-Type，浏览器才会正确识别 PDF / Word / 图片
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(req.params.file)}`); // 支持中文文件名
     res.send(buffer); // 输出文件二进制内容
   }).catch(() => res.status(500).send('读取失败')); // 读取出错返回 500
 });
@@ -338,6 +340,7 @@ app.get('/api/applications/mine', requireAuth(['seeker']), wrap(async (req, res)
 app.get('/api/applications/received', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT a.*, r.name AS candidate, r.skills, r.experience, r.education,
+            r.attachment_name, r.attachment_path,
             j.title AS job_title
      FROM applications a JOIN resumes r ON r.id = a.resume_id
      JOIN jobs j ON j.id = a.job_id
