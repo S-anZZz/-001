@@ -3,3 +3,6 @@ uploads/
 .idea/
 *.log
 .env
+_report/原报告备份.docx
+_report/__pycache__/
+~$*

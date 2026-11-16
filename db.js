@@ -52,6 +52,7 @@ async function init() {
       phone VARCHAR(32),
       status VARCHAR(16) NOT NULL DEFAULT 'active',
       token VARCHAR(128),
+      token_expires_at DATETIME,
       avatar_path VARCHAR(255),
       license_path VARCHAR(255),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -140,6 +141,7 @@ async function init() {
       user_id INT NOT NULL,
       type VARCHAR(32) NOT NULL,
       message TEXT NOT NULL,
+      is_read TINYINT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -157,6 +159,12 @@ async function init() {
   await ensureColumn('users', 'avatar_path', "ADD COLUMN avatar_path VARCHAR(255)");
   // 兼容旧库：若 users 表缺少经营许可证字段，则补充
   await ensureColumn('users', 'license_path', "ADD COLUMN license_path VARCHAR(255)");
+  // 兼容旧库：令牌过期时间
+  await ensureColumn('users', 'token_expires_at', "ADD COLUMN token_expires_at DATETIME");
+  // 兼容旧库：通知已读标记
+  await ensureColumn('notifications', 'is_read', "ADD COLUMN is_read TINYINT NOT NULL DEFAULT 0");
+  // 投递唯一索引：同一个求职者对同一职位只能投递一次（数据库层兜底，防并发重复）
+  await ensureUniqueApplyIndex();
 
   await seed(); // 写入演示数据
 }
@@ -171,9 +179,43 @@ async function ensureColumn(table, column, ddl) {
   if (!rows[0].c) await pool.query(`ALTER TABLE ${table} ${ddl}`);
 }
 
-// hashPassword：使用 scrypt 加盐哈希密码，避免明文存储
+// hashPassword：使用随机盐 + scrypt 哈希密码，格式 scrypt$盐$哈希
 function hashPassword(pwd) {
-  return crypto.scryptSync(pwd, 'add-work-salt', 32).toString('hex');
+  const salt = crypto.randomBytes(16).toString('hex'); // 每条记录独立随机盐，杜绝彩虹表
+  const hash = crypto.scryptSync(pwd, salt, 32).toString('hex'); // 用该盐计算哈希
+  return `scrypt$${salt}$${hash}`; // 盐与哈希一起存储，便于校验
+}
+
+// verifyPassword：校验密码，同时兼容旧版固定盐哈希
+function verifyPassword(pwd, stored) {
+  if (!stored) return false; // 无哈希直接失败
+  if (String(stored).startsWith('scrypt$')) {
+    const parts = String(stored).split('$'); // 拆出盐与哈希
+    const calc = crypto.scryptSync(pwd, parts[1], 32).toString('hex'); // 用同一盐重算
+    return calc === parts[2]; // 比较哈希值
+  }
+  // 旧数据：固定盐 'add-work-salt'
+  return crypto.scryptSync(pwd, 'add-work-salt', 32).toString('hex') === stored;
+}
+
+// needsRehash：判断是否为旧版哈希，登录成功后顺手升级为随机盐
+function needsRehash(stored) {
+  return !!stored && !String(stored).startsWith('scrypt$');
+}
+
+// ensureUniqueApplyIndex：为 applications 建立 (seeker_id, job_id) 唯一索引
+// 历史数据可能存在重复投递，先清理重复只保留最早一条，再建索引
+async function ensureUniqueApplyIndex() {
+  const [idx] = await pool.query(
+    `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'applications' AND INDEX_NAME = 'uk_app_seeker_job'`
+  ); // 查询索引是否已存在
+  if (idx[0].c) return; // 已存在则跳过
+  await pool.query(
+    `DELETE a FROM applications a JOIN applications b
+     ON a.seeker_id = b.seeker_id AND a.job_id = b.job_id AND a.id > b.id`
+  ); // 清理重复投递，保留 id 最小的一条
+  await pool.query('ALTER TABLE applications ADD UNIQUE KEY uk_app_seeker_job (seeker_id, job_id)'); // 建立唯一索引
 }
 
 // newToken：生成随机登录令牌，用于登录态校验
@@ -241,4 +283,4 @@ async function seed() {
 }
 
 // 导出连接池与工具函数，供 server.js 使用
-module.exports = { pool, init, hashPassword, newToken };
+module.exports = { pool, init, hashPassword, verifyPassword, needsRehash, newToken };

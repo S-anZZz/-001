@@ -17,6 +17,19 @@ async function api(path, options = {}) {
   return data.data; // 返回数据
 }
 
+// timeFmt：把后端返回的 ISO 时间转成本地可读格式（避免直接显示 UTC 的 T 格式）
+function timeFmt(v) {
+  if (!v) return ''; // 空值直接返回
+  const d = new Date(v); // 按浏览器时区解析
+  if (isNaN(d.getTime())) return String(v).replace('T', ' ').slice(0, 16); // 解析失败时兜底
+  const p = (n) => String(n).padStart(2, '0'); // 补零
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// jobPage / jobSort：职位列表的分页与排序状态
+let jobPage = 1;
+let jobSort = 'latest';
+
 // showMsg：在认证区域显示提示信息
 function showMsg(text, isErr) {
   const el = document.getElementById('authMsg'); // 取提示容器
@@ -270,7 +283,8 @@ async function seekerJobs(p) {
   await searchJobs();
 };
 
-async function searchJobs() {
+async function searchJobs(page) {
+  jobPage = page || jobPage || 1; // 保持当前页
   const q = new URLSearchParams();
   const kw = document.getElementById('fKeyword').value.trim();
   if (kw) q.set('keyword', kw);
@@ -282,15 +296,36 @@ async function searchJobs() {
   if (edu) q.set('education', edu);
   const exp = document.getElementById('fExp').value;
   if (exp) q.set('experience', exp);
-  const jobs = await api('/api/jobs?' + q.toString());
+  if (jobSort !== 'latest') q.set('sort', jobSort); // 排序参数
+  q.set('page', jobPage); // 页码
+  q.set('pageSize', 10); // 每页 10 条
+  let d;
+  try {
+    d = await api('/api/jobs?' + q.toString()); // 请求分页数据
+  } catch (err) {
+    document.getElementById('jobsTable').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 请求失败提示
+    return;
+  }
   const t = document.getElementById('jobsTable');
-  if (!jobs.length) { t.innerHTML = '<div class="empty">没有符合条件的职位</div>'; return; }
+  const jobs = d.list || [];
+  if (!jobs.length) {
+    t.innerHTML = '<div class="empty">没有符合条件的职位，换个关键词试试</div>'; // 空结果提示
+    return;
+  }
   t.innerHTML = `
+    <div class="list-bar">
+      <span class="match">共 ${d.total} 个职位 · 第 ${d.page}/${d.pages} 页</span>
+      <select onchange="jobSort=this.value;searchJobs(1)">
+        <option value="latest" ${jobSort === 'latest' ? 'selected' : ''}>最新发布</option>
+        <option value="salaryDesc" ${jobSort === 'salaryDesc' ? 'selected' : ''}>薪资从高到低</option>
+        <option value="salaryAsc" ${jobSort === 'salaryAsc' ? 'selected' : ''}>薪资从低到高</option>
+      </select>
+    </div>
     <table class="grid">
       <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>学历</th><th>经验</th><th>要求</th><th>操作</th></tr>
       ${jobs.map((j) => `
         <tr>
-          <td><b>${esc(j.title)}</b></td>
+          <td><b>${esc(j.title)}</b><div class="match">${timeFmt(j.created_at)}</div></td>
           <td>${esc(j.company || j.company_name)}</td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
@@ -301,7 +336,12 @@ async function searchJobs() {
             ? `<button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>`
             : '<span class="match">企业端</span>'}</td>
         </tr>`).join('')}
-    </table>`;
+    </table>
+    <div class="pager">
+      <button class="tiny ghost" ${d.page <= 1 ? 'disabled' : ''} onclick="searchJobs(${d.page - 1})">上一页</button>
+      <span class="match">${d.page} / ${d.pages}</span>
+      <button class="tiny ghost" ${d.page >= d.pages ? 'disabled' : ''} onclick="searchJobs(${d.page + 1})">下一页</button>
+    </div>`;
 }
 
 async function applyJob(id, btn) {
@@ -479,20 +519,37 @@ async function respondContact(id, accept, btn) {
 }
 
 PANELS.notify = async (p) => {
-  const list = await api('/api/notifications');
+  let d;
+  try {
+    d = await api('/api/notifications'); // 拉取通知与未读数
+  } catch (err) {
+    p.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 请求失败提示
+    return;
+  }
+  const list = d.list || [];
   p.innerHTML = `
     <div class="card">
       <div class="card-head">通知</div>
       <div class="card-body">
+        ${d.unread ? `<div class="list-bar"><span class="match">${d.unread} 条未读</span>
+          <button class="tiny" onclick="readAllNotify()">全部已读</button></div>` : ''}
         ${list.length ? list.map((n) => `
-          <div class="msg" style="border-left:4px solid #000;margin-bottom:8px">
+          <div class="msg ${n.is_read ? '' : 'unread'}" style="border-left:4px solid #000;margin-bottom:8px">
             <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息' }[n.type] || n.type}</b>
-            <span class="match"> · ${esc(n.created_at)}</span>
+            <span class="match"> · ${timeFmt(n.created_at)}</span>
             <div>${esc(n.message)}</div>
           </div>`).join('') : '<div class="empty">暂无通知</div>'}
       </div>
     </div>`;
 };
+
+// readAllNotify：一键把通知标记为已读
+async function readAllNotify() {
+  try {
+    await api('/api/notifications/read', { method: 'POST' }); // 调用批量已读接口
+    await openTab('notify'); // 刷新面板
+  } catch (err) { alert(err.message); }
+}
 async function companyJobs(p) {
   const jobs = await api('/api/jobs/mine');
   p.innerHTML = `
@@ -589,7 +646,7 @@ function renderJobsTable(jobs) {
           <td><b>${esc(j.title)}</b></td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
-          <td><span class="badge">${{ unpublished: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
+          <td><span class="badge">${{ offline: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
           <td>
             <button class="tiny" onclick="editJob(${j.id})">编辑</button>
             <button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>

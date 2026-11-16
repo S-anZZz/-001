@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const { pool, init, hashPassword, newToken } = require('./db');
+const { pool, init, hashPassword, verifyPassword, needsRehash, newToken } = require('./db');
 const { putFile, getFile, MODE: FILE_MODE } = require('./storage');
 const { matchScore } = require('./match');
 const { createMeeting } = require('./meeting');
@@ -38,7 +38,14 @@ async function currentUser(req) {
   const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!token) return null;
   const [rows] = await pool.query('SELECT * FROM users WHERE token = ?', [token]);
-  return rows[0] || null;
+  const user = rows[0];
+  if (!user) return null; // 令牌不存在
+  const expires = user.token_expires_at ? new Date(user.token_expires_at).getTime() : 0; // 解析过期时间
+  if (expires && expires < Date.now()) { // 令牌已过期
+    await pool.query('UPDATE users SET token = NULL, token_expires_at = NULL WHERE id = ?', [user.id]); // 清理过期令牌
+    return null;
+  }
+  return user;
 }
 
 function requireAuth(roles) {
@@ -117,17 +124,35 @@ app.post('/api/register', wrap(async (req, res) => {
   send(res, true, { user: users[0], message: role === 'company' ? '注册成功，请等待管理员审核' : '注册成功，请登录' });
 }));
 
+// 登录失败计数：同一用户名 5 分钟内失败 5 次后临时锁定，防止暴力破解
+const loginFails = new Map();
+const LOGIN_WINDOW = 5 * 60 * 1000; // 统计窗口 5 分钟
+const LOGIN_MAX = 5; // 允许的最大失败次数
+
 app.post('/api/login', wrap(async (req, res) => {
   // 登录接口：校验用户名密码并签发登录令牌
   const { username, password } = req.body || {}; // 解析登录参数
+  const key = String(username || '').toLowerCase(); // 归一化用户名，作为计数键
+  const rec = loginFails.get(key); // 取出该用户名的失败记录
+  if (rec && rec.count >= LOGIN_MAX && Date.now() - rec.first < LOGIN_WINDOW) {
+    return send(res, false, '密码错误次数过多，请 5 分钟后再试'); // 触发锁定
+  }
   const [rows] = await pool.query('SELECT * FROM users WHERE username = ?', [username || '']); // 按用户名查询用户
   const user = rows[0]; // 取查询结果
-  if (!user || user.password !== hashPassword(password || '')) return send(res, false, '用户名或密码错误'); // 校验密码
+  if (!user || !verifyPassword(password || '', user.password)) { // 校验密码（兼容旧哈希）
+    const now = Date.now();
+    loginFails.set(key, rec && now - rec.first < LOGIN_WINDOW ? { first: rec.first, count: rec.count + 1 } : { first: now, count: 1 }); // 累计失败次数
+    return send(res, false, '用户名或密码错误');
+  }
+  loginFails.delete(key); // 登录成功清除失败记录
   if (user.status === 'pending') return send(res, false, '账号待管理员审核，暂不能登录'); // 企业待审核不可登录
   if (user.status !== 'active') return send(res, false, '账号已被停用'); // 停用账号不可登录
+  if (needsRehash(user.password)) { // 旧版固定盐哈希，登录成功后自动升级
+    await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
+  }
   const token = newToken(); // 生成登录令牌
-  await pool.query('UPDATE users SET token = ? WHERE id = ?', [token, user.id]); // 保存令牌
-  const { password: _p, password_hash: _ph, ...safe } = user; // 去掉密码字段
+  await pool.query('UPDATE users SET token = ?, token_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = ?', [token, user.id]); // 令牌 7 天有效
+  const { password: _p, password_hash: _ph, token: _t, token_expires_at: _e, ...safe } = user; // 去掉敏感字段
   send(res, true, { user: safe, token }); // 返回用户信息与令牌
 }));
 
@@ -204,23 +229,31 @@ app.post('/api/resume', requireAuth(['seeker']), wrap(async (req, res) => {
 
 // 搜索职位：支持关键词、地点、薪资、学历、经验筛选，仅返回已发布职位
 app.get('/api/jobs', wrap(async (req, res) => {
-  const { keyword, location, minSalary, education, experience } = req.query; // 解析筛选条件
-  let sql = `SELECT j.*, u.name AS company_name, u.company_name AS company
-             FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status = 'published'`; // 查询已发布职位
+  // 支持关键词、地点、薪资、学历、经验筛选，并分页返回
+  const { keyword, location, minSalary, education, experience, sort } = req.query; // 解析筛选与排序条件
+  const page = Math.max(1, Number(req.query.page) || 1); // 页码，最小为 1
+  const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 10)); // 每页条数，限制 1~50
   const where = []; // 动态条件集合
   const args = []; // 条件参数集合
   if (keyword) { where.push('(j.title LIKE ? OR j.requirements LIKE ?)'); args.push(`%${keyword}%`, `%${keyword}%`); } // 关键词匹配职位或要求
   if (location) { where.push('j.location = ?'); args.push(location); } // 按地点筛选
-  if (minSalary) { where.push('j.salary_max >= ?'); args.push(+minSalary); } // 按最低薪资筛选
+  if (minSalary) { where.push('j.salary_max >= ?'); args.push(+minSalary); } // 按薪资上限筛选
   if (education) { where.push('j.education = ?'); args.push(education); } // 按学历筛选
   if (experience) { where.push('j.experience = ?'); args.push(experience); } // 按经验筛选
-  if (where.length) sql += ' AND ' + where.join(' AND '); // 拼接动态条件
-  sql += ' ORDER BY j.id DESC'; // 按最新排序
-  const [rows] = await pool.query(sql, args); // 执行查询
-  send(res, true, rows); // 返回职位列表
+  const base = `FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status = 'published'`
+    + (where.length ? ' AND ' + where.join(' AND ') : ''); // 公共 FROM 与 WHERE
+  const [countRows] = await pool.query(`SELECT COUNT(*) AS total ${base}`, args); // 统计总数用于分页
+  const total = countRows[0].total; // 总条数
+  const orderBy = sort === 'salaryDesc' ? 'j.salary_max DESC, j.id DESC'
+    : sort === 'salaryAsc' ? 'j.salary_min ASC, j.id ASC'
+    : 'j.id DESC'; // 排序策略：最新 / 薪资高低
+  const [rows] = await pool.query(
+    `SELECT j.*, u.name AS company_name, u.company_name AS company ${base} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+    [...args, pageSize, (page - 1) * pageSize]
+  ); // 分页查询当前页数据
+  send(res, true, { list: rows, total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) }); // 返回列表与分页信息
 }));
 
-// 企业端：查看自己发布的职位
 app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM jobs WHERE company_id = ? ORDER BY id DESC', [req.user.id]); // 查询该企业的职位
   send(res, true, rows); // 返回职位列表
@@ -230,6 +263,7 @@ app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
 app.post('/api/jobs', requireAuth(['company']), wrap(async (req, res) => {
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析职位参数
   if (!title) return send(res, false, '职位标题必填'); // 标题必填校验
+  if (salaryMin && salaryMax && Number(salaryMin) > Number(salaryMax)) return send(res, false, '最低薪资不能高于最高薪资'); // 薪资区间校验
   const [info] = await pool.query(
     `INSERT INTO jobs (company_id, title, requirements, location, salary_min, salary_max, education, experience, status)
      VALUES (?,?,?,?,?,?,?,?, 'published')`,
@@ -243,7 +277,7 @@ app.patch('/api/jobs/:id', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
   const job = rows[0]; // 取职位
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
-  if (job.status === 'unpublished') return send(res, false, '职位已下架，请先重新上架后再修改'); // 已下架职位不可直接修改
+  if (job.status === 'offline') return send(res, false, '职位已下架，请先重新上架后再修改'); // 已下架职位不可直接修改
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析修改内容
   await pool.query(
     `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?, status='published'
@@ -258,7 +292,7 @@ app.patch('/api/jobs/:id/unpublish', requireAuth(['company']), wrap(async (req, 
   const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
   const job = rows[0]; // 取职位
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
-  await pool.query("UPDATE jobs SET status='unpublished' WHERE id=?", [req.params.id]); // 置为已下架
+  await pool.query("UPDATE jobs SET status='offline' WHERE id=?", [req.params.id]); // 置为已下架（统一使用 offline）
   send(res, true, '职位已下架'); // 返回提示
 }));
 
@@ -273,11 +307,17 @@ app.post('/api/jobs/:id/apply', requireAuth(['seeker']), wrap(async (req, res) =
   const [dup] = await pool.query('SELECT id FROM applications WHERE resume_id=? AND job_id=?', [resume.id, job.id]); // 查重
   if (dup.length) return send(res, false, '已投递过该职位'); // 重复投递提示
   const { score, reasons } = matchScore(resume, job); // 计算匹配分与理由
-  const [info] = await pool.query(
-    `INSERT INTO applications (resume_id, job_id, seeker_id, company_id, status, match_score, match_reasons)
-     VALUES (?,?,?,?,'submitted',?,?)`,
-    [resume.id, job.id, req.user.id, job.company_id, score, reasons]
-  ); // 插入投递记录
+  let info;
+  try {
+    [info] = await pool.query(
+      `INSERT INTO applications (resume_id, job_id, seeker_id, company_id, status, match_score, match_reasons)
+       VALUES (?,?,?,?,'submitted',?,?)`,
+      [resume.id, job.id, req.user.id, job.company_id, score, reasons]
+    ); // 插入投递记录
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') return send(res, false, '已投递过该职位'); // 并发重复投递由唯一索引拦截
+    throw e; // 其他异常继续上抛
+  }
   await notify(job.company_id, 'application', `收到新简历：${resume.name} 投递了「${job.title}」（匹配分 ${score}）`);
   send(res, true, { id: info.insertId, score, reasons });
 }));
@@ -424,7 +464,14 @@ app.post('/api/contact/requests/:id/respond', requireAuth(), wrap(async (req, re
 // 查看当前用户的通知列表
 app.get('/api/notifications', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 50', [req.user.id]); // 查询通知
-  send(res, true, rows); // 返回通知列表
+  const [unread] = await pool.query('SELECT COUNT(*) AS c FROM notifications WHERE user_id = ? AND is_read = 0', [req.user.id]); // 未读数量
+  send(res, true, { list: rows, unread: unread[0].c }); // 返回通知列表与未读数
+}));
+
+// 通知：全部标记为已读
+app.post('/api/notifications/read', requireAuth(), wrap(async (req, res) => {
+  await pool.query('UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0', [req.user.id]); // 批量置为已读
+  send(res, true, '已全部标记为已读'); // 返回提示
 }));
 
 // 管理员：查看企业注册列表
