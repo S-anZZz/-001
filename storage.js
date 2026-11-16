@@ -40,11 +40,5 @@ async function getFile(file) {
   return fs.existsSync(filePath) ? fs.readFileSync(filePath) : null; // 存在则读盘，否则返回 null
 }
 
-// hasFile：判断文件是否存在，用于上传去重等场景
-async function hasFile(file) {
-  const buffer = await getFile(file); // 复用 getFile 的读取逻辑
-  return !!buffer; // 转成布尔值返回
-}
-
 // 导出存储能力与当前模式，供 server.js 与启动日志使用
-module.exports = { putFile, getFile, hasFile, uploadsDir, MODE };
+module.exports = { putFile, getFile, uploadsDir, MODE };

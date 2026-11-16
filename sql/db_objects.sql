@@ -39,7 +39,7 @@ DROP VIEW IF EXISTS v_application_detail; -- 先删后建，保证可重复执�
 CREATE VIEW v_application_detail AS -- 创建投递详情视图
 SELECT
   a.id                AS application_id, -- 投递记录主键
-  a.status            AS status,         -- 投递状态：submitted/viewed/interview/offer/rejected
+  a.status            AS status,         -- 投递状态：submitted / viewed / interview / accepted / rejected
   a.match_score       AS match_score,    -- 投递时计算出的匹配分（0~100）
   a.match_reasons     AS match_reasons,  -- 匹配理由文本
   a.meeting_link      AS meeting_link,   -- 线上面试链接
@@ -105,28 +105,71 @@ DELIMITER ; -- 恢复默认分隔符
 
 DROP FUNCTION IF EXISTS fn_match_score; -- 重复执行时先删除旧函数
 DELIMITER $$ -- 进入自定义分隔符模式
-CREATE FUNCTION fn_match_score(p_skills TEXT, p_requirements TEXT) -- 定义函数：按技能交集比例计算匹配分
+CREATE FUNCTION fn_match_score( -- 定义函数：与应用层完全一致的加权匹配分（技能 60 + 经验 20 + 学历 20）
+  p_skills TEXT, p_requirements TEXT, -- 简历技能、职位要求
+  p_resume_exp VARCHAR(32), p_job_exp VARCHAR(32), -- 简历与职位的经验要求
+  p_resume_edu VARCHAR(32), p_job_edu VARCHAR(32) -- 简历与职位的学历要求
+)
 RETURNS INT -- 返回 0~100 的整数分数
 DETERMINISTIC -- 纯函数，无副作用
 BEGIN
+  DECLARE v_rest TEXT; -- 待处理的职位要求串
+  DECLARE v_tag VARCHAR(64); -- 当前取出的单个技能
+  DECLARE v_skills TEXT; -- 归一化后的简历技能串
   DECLARE v_total INT DEFAULT 0; -- 职位要求中的技能总数
-  DECLARE v_hit INT DEFAULT 0;   -- 简历命中的技能数
-  IF p_skills IS NULL OR p_requirements IS NULL THEN -- 任一侧为空则无法比较
+  DECLARE v_hit INT DEFAULT 0; -- 简历命中的技能数
+  DECLARE v_score INT DEFAULT 0; -- 累计得分
+  DECLARE v_ry INT DEFAULT -1; -- 简历年限
+  DECLARE v_jy INT DEFAULT -1; -- 职位要求年限
+  DECLARE v_re INT DEFAULT 0; -- 简历学历等级
+  DECLARE v_je INT DEFAULT 0; -- 职位学历等级
+
+  IF p_requirements IS NULL OR p_skills IS NULL THEN -- 任一侧为空无法比较
     RETURN 0; -- 返回 0 分
   END IF;
-  SET v_total = 1 + LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, ',', '')); -- 逗号数量 + 1 即技能个数
-  IF v_total = 0 THEN -- 防御性判断，避免除零
-    RETURN 0; -- 返回 0 分
+
+  SET v_skills = REPLACE(REPLACE(p_skills, '，', ','), ' ', ''); -- 统一中文逗号并去空白
+  SET v_rest = REPLACE(REPLACE(p_requirements, '，', ','), ' ', ''); -- 同上
+
+  WHILE LENGTH(v_rest) > 0 DO -- 逐个切分职位要求里的技能
+    SET v_tag = SUBSTRING_INDEX(v_rest, ',', 1); -- 取第一个技能
+    SET v_rest = IF(LOCATE(',', v_rest) > 0, SUBSTRING(v_rest, LOCATE(',', v_rest) + 1), ''); -- 剩余部分
+    IF v_tag <> '' THEN -- 跳过空串
+      SET v_total = v_total + 1; -- 技能总数加一
+      -- 用逗号包裹做精确匹配，Java 不会命中 JavaScript
+      IF LOCATE(CONCAT(',', v_tag, ','), CONCAT(',', v_skills, ',')) > 0 THEN
+        SET v_hit = v_hit + 1; -- 命中则累加
+      END IF;
+    END IF;
+  END WHILE;
+
+  IF v_total > 0 THEN -- 有技能要求时按覆盖率折算 60 分
+    SET v_score = v_score + ROUND(60 * v_hit / v_total); -- 技能分
   END IF;
-  -- 逐个技能判断是否出现在简历技能串中，命中则累加
-  SET v_hit = (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'JavaScript', ''))) / LENGTH('JavaScript') * (p_skills LIKE '%JavaScript%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'Vue', '')))        / LENGTH('Vue')        * (p_skills LIKE '%Vue%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'React', '')))      / LENGTH('React')      * (p_skills LIKE '%React%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'Node.js', '')))    / LENGTH('Node.js')    * (p_skills LIKE '%Node.js%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'Java', '')))       / LENGTH('Java')       * (p_skills LIKE '%Java%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, 'Python', '')))     / LENGTH('Python')     * (p_skills LIKE '%Python%')
-            + (LENGTH(p_requirements) - LENGTH(REPLACE(p_requirements, '数据库', '')))      / LENGTH('数据库')      * (p_skills LIKE '%数据库%'); -- 汇总命中技能数
-  RETURN LEAST(100, FLOOR(v_hit * 100 / v_total)); -- 命中比例换算成百分制，最高 100
+
+  -- 经验：取双方文本里的最小数字作为年限，简历不低于要求才加 20 分
+  IF p_resume_exp IS NOT NULL AND p_resume_exp <> '' THEN
+    SET v_ry = CAST(REGEXP_SUBSTR(p_resume_exp, '[0-9]+') AS UNSIGNED); -- 简历年限
+  END IF;
+  IF p_job_exp IS NOT NULL AND p_job_exp <> '' THEN
+    SET v_jy = CAST(REGEXP_SUBSTR(p_job_exp, '[0-9]+') AS UNSIGNED); -- 职位年限
+  END IF;
+  IF v_ry >= 0 AND v_jy >= 0 AND v_ry >= v_jy THEN
+    SET v_score = v_score + 20; -- 经验满足
+  END IF;
+
+  -- 学历：折算成等级再比较，简历不低于要求才加 20 分
+  SET v_re = CASE WHEN p_resume_edu LIKE '%博士%' THEN 5 WHEN p_resume_edu LIKE '%硕士%' OR p_resume_edu LIKE '%研究生%' THEN 4
+                  WHEN p_resume_edu LIKE '%本科%' THEN 3 WHEN p_resume_edu LIKE '%大专%' OR p_resume_edu LIKE '%专科%' THEN 2
+                  WHEN p_resume_edu LIKE '%高中%' OR p_resume_edu LIKE '%中专%' THEN 1 ELSE 0 END; -- 简历学历等级
+  SET v_je = CASE WHEN p_job_edu LIKE '%博士%' THEN 5 WHEN p_job_edu LIKE '%硕士%' OR p_job_edu LIKE '%研究生%' THEN 4
+                  WHEN p_job_edu LIKE '%本科%' THEN 3 WHEN p_job_edu LIKE '%大专%' OR p_job_edu LIKE '%专科%' THEN 2
+                  WHEN p_job_edu LIKE '%高中%' OR p_job_edu LIKE '%中专%' THEN 1 ELSE 0 END; -- 职位学历等级
+  IF v_re > 0 AND v_je > 0 AND v_re >= v_je THEN
+    SET v_score = v_score + 20; -- 学历满足
+  END IF;
+
+  RETURN LEAST(100, v_score); -- 归一到 0~100
 END$$ -- 函数体结束
 DELIMITER ; -- 恢复默认分隔符
 
@@ -161,7 +204,7 @@ BEGIN
       VALUES (v_company_id, 'audit', CONCAT('职位「', (SELECT title FROM jobs WHERE id = p_job_id), '」审核通过，已上架')); -- 通知内容
       SET p_msg = '审核通过，职位已上架'; -- 返回提示
     ELSE -- 其余情况按驳回处理
-      UPDATE jobs SET status = 'rejected' WHERE id = p_job_id; -- 职位置为驳回
+      UPDATE jobs SET status = 'offline' WHERE id = p_job_id; -- 职位置为已下架（与代码状态枚举一致）
       INSERT INTO notifications (user_id, type, message) -- 给企业写一条通知
       VALUES (v_company_id, 'audit', CONCAT('职位「', (SELECT title FROM jobs WHERE id = p_job_id), '」未通过审核，请修改后重新提交')); -- 通知内容
       SET p_msg = '已驳回该职位'; -- 返回提示
@@ -184,6 +227,10 @@ BEGIN
   DECLARE v_skills TEXT; -- 简历技能标签
   DECLARE v_company_id INT DEFAULT 0; -- 职位所属企业
   DECLARE v_requirements TEXT; -- 职位要求
+  DECLARE v_r_exp VARCHAR(32); -- 简历经验
+  DECLARE v_r_edu VARCHAR(32); -- 简历学历
+  DECLARE v_j_exp VARCHAR(32); -- 职位经验要求
+  DECLARE v_j_edu VARCHAR(32); -- 职位学历要求
   DECLARE v_dup INT DEFAULT 0; -- 重复投递数
   DECLARE v_score INT DEFAULT 0; -- 计算出的匹配分
   DECLARE EXIT HANDLER FOR SQLEXCEPTION -- 异常处理
@@ -192,12 +239,14 @@ BEGIN
     SET p_app_id = 0, p_msg = '投递失败：数据库异常'; -- 返回错误
   END;
   START TRANSACTION; -- 开启事务
-  SELECT id, skills INTO v_resume_id, v_skills FROM resumes WHERE user_id = p_seeker_id LIMIT 1; -- 取求职者简历
+  SELECT id, skills, experience, education INTO v_resume_id, v_skills, v_r_exp, v_r_edu
+    FROM resumes WHERE user_id = p_seeker_id LIMIT 1; -- 取求职者简历（含经验与学历）
   IF v_resume_id = 0 THEN -- 没有简历
     SET p_msg = '请先创建简历后再投递'; -- 提示先建简历
     ROLLBACK; -- 回滚
   ELSE
-    SELECT company_id, requirements INTO v_company_id, v_requirements FROM jobs WHERE id = p_job_id AND status = 'published'; -- 取已发布职位
+    SELECT company_id, requirements, experience, education INTO v_company_id, v_requirements, v_j_exp, v_j_edu
+      FROM jobs WHERE id = p_job_id AND status = 'published'; -- 取已发布职位（含经验与学历要求）
     IF v_company_id = 0 THEN -- 职位不存在或未发布
       SET p_msg = '职位不存在或已下架'; -- 提示
       ROLLBACK; -- 回滚
@@ -207,7 +256,7 @@ BEGIN
         SET p_msg = '已投递过该职位，请勿重复投递'; -- 提示
         ROLLBACK; -- 回滚
       ELSE
-        SET v_score = fn_match_score(v_skills, v_requirements); -- 调用存储函数算匹配分
+        SET v_score = fn_match_score(v_skills, v_requirements, v_r_exp, v_j_exp, v_r_edu, v_j_edu); -- 与应用层一致的加权匹配分
         INSERT INTO applications (resume_id, job_id, seeker_id, company_id, status, match_score, match_reasons) -- 插入投递记录
         VALUES (v_resume_id, p_job_id, p_seeker_id, v_company_id, 'submitted', v_score, CONCAT('技能匹配分 ', v_score)); -- 初始状态为已投递
         SET p_app_id = LAST_INSERT_ID(); -- 取出新记录主键
@@ -242,16 +291,8 @@ BEGIN
 END$$ -- 触发器体结束
 DELIMITER ; -- 恢复默认分隔符
 
-DROP TRIGGER IF EXISTS trg_applications_after_insert; -- 先删后建
-DELIMITER $$ -- 进入自定义分隔符模式
-CREATE TRIGGER trg_applications_after_insert -- 触发器：新增投递后自动累计计数
-AFTER INSERT ON applications -- 触发时机：applications 表插入之后
-FOR EACH ROW -- 行级触发器
-BEGIN
-  INSERT INTO notifications (user_id, type, message) -- 写入通知表
-  VALUES (NEW.seeker_id, 'apply_result', CONCAT('你的投递已提交成功，匹配分 ', COALESCE(NEW.match_score, 0))); -- 通知求职者
-END$$ -- 触发器体结束
-DELIMITER ; -- 恢复默认分隔符
+-- 说明：投递成功的站内通知由应用层统一发送，这里不再建立重复触发器
+DROP TRIGGER IF EXISTS trg_applications_after_insert; -- 清理历史版本遗留的触发器
 
 -- =====================================================================
 -- 脚本执行结束

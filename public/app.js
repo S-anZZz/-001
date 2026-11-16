@@ -1,7 +1,7 @@
 // user：当前登录用户对象
 let user = null;
-// token：登录令牌，持久化在 localStorage
-let token = localStorage.getItem('token') || null;
+// token：登录令牌，只保存在内存中；持久化由服务端 HttpOnly Cookie 负责，避免 XSS 窃取
+let token = null;
 
 // api：统一的后端请求封装，自动携带登录令牌
 async function api(path, options = {}) {
@@ -41,7 +41,12 @@ let jobSort = 'latest';
 function showMsg(text, isErr) {
   const el = document.getElementById('authMsg'); // 取提示容器
   if (!el) return;
-  el.innerHTML = text ? `<div class="msg ${isErr ? 'err' : ''}">${text}</div>` : ''; // 渲染提示
+  el.textContent = ''; // 清空旧内容
+  if (!text) return; // 无内容直接返回
+  const box = document.createElement('div'); // 新建提示节点
+  box.className = 'msg' + (isErr ? ' err' : ''); // 设置样式
+  box.textContent = String(text); // 以纯文本写入，杜绝 HTML 注入
+  el.appendChild(box);
 }
 
 // esc：转义 HTML 特殊字符，防止注入
@@ -58,8 +63,7 @@ async function login(e) {
       method: 'POST',
       body: JSON.stringify({ username: loginUser.value, password: loginPwd.value }) // 组装登录参数
     });
-    token = d.token; user = d.user; // 保存令牌与用户
-    localStorage.setItem('token', token); // 持久化令牌
+    token = d.token; user = d.user; // 仅在内存中保存令牌与用户
     enterDashboard(); // 进入工作台
   } catch (err) { showMsg(err.message, true); } // 错误提示
 }
@@ -124,8 +128,7 @@ async function register(e) {
 // logout：退出登录，清除令牌并回到登录页
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
-  token = null; user = null; // 清空登录状态
-  localStorage.removeItem('token'); // 移除持久化令牌
+  token = null; user = null; // 清空内存中的登录状态
   document.getElementById('authWrap').style.display = 'block'; // 显示登录区
   document.getElementById('dashWrap').style.display = 'none'; // 隐藏工作台
   document.getElementById('userBox').style.display = 'none'; // 隐藏用户信息
@@ -275,7 +278,8 @@ async function seekerJobs(p) {
         <div class="filters">
           <div><label>关键词</label><input type="search" id="fKeyword"></div>
           <div><label>地点</label><input type="text" id="fLoc" placeholder="如：上海"></div>
-          <div><label>最低薪资（元）</label><input type="number" id="fSal" min="0"></div>
+          <div><label>期望最低（元）</label><input type="number" id="fSal" min="0"></div>
+          <div><label>期望最高（元）</label><input type="number" id="fSalMax" min="0"></div>
           <div><label>学历</label>
             <select id="fEdu"><option value="">不限</option><option>大专</option><option>本科</option><option>硕士</option></select>
           </div>
@@ -299,6 +303,8 @@ async function searchJobs(page) {
   if (loc) q.set('location', loc);
   const sal = document.getElementById('fSal').value;
   if (sal) q.set('minSalary', sal);
+  const salMax = document.getElementById('fSalMax').value;
+  if (salMax) q.set('maxSalary', salMax);
   const edu = document.getElementById('fEdu').value;
   if (edu) q.set('education', edu);
   const exp = document.getElementById('fExp').value;
@@ -656,10 +662,20 @@ function renderJobsTable(jobs) {
           <td><span class="badge">${{ offline: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
           <td>
             <button class="tiny" onclick="editJob(${j.id})">编辑</button>
-            <button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>
+            ${j.status === 'offline'
+              ? `<button class="tiny" onclick="republishJob(${j.id})">重新上架</button>`
+              : `<button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>`}
           </td>
         </tr>`).join('')}
     </table>`;
+}
+
+// republishJob：把已下架职位重新上架
+async function republishJob(id) {
+  try {
+    await api(`/api/jobs/${id}/republish`, { method: 'PATCH' }); // 调用重新上架接口
+    await openTab('jobs'); // 刷新列表
+  } catch (err) { alert(err.message); }
 }
 
 async function unpublishJob(id) {
@@ -728,13 +744,14 @@ PANELS.companies = async (p) => {
       <div class="card-body">
         ${list.length ? `
         <table class="grid">
-          <tr><th>企业名称</th><th>联系人</th><th>用户名</th><th>电话</th><th>状态</th><th>操作</th></tr>
+          <tr><th>企业名称</th><th>联系人</th><th>用户名</th><th>电话</th><th>经营许可证</th><th>状态</th><th>操作</th></tr>
           ${list.map((c) => `
             <tr>
               <td><b>${esc(c.company_name)}</b></td>
               <td>${esc(c.name)}</td>
               <td>${esc(c.username)}</td>
               <td>${esc(c.phone)}</td>
+              <td>${fileLink('查看许可证', c.license_path)}</td>
               <td><span class="badge">${c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : '已停用'}</span></td>
               <td>${c.status === 'pending'
                 ? `<button class="tiny" onclick="approveCompany(${c.id})">通过</button>
@@ -789,13 +806,11 @@ async function toggleUserStatus(id, status) {
 }
 
 (async function init() {
-  if (token) {
-    try {
-      user = await api('/api/me');
-      enterDashboard();
-    } catch (e) {
-      token = null; localStorage.removeItem('token');
-    }
+  try {
+    user = await api('/api/me'); // 依靠服务端 HttpOnly Cookie 恢复登录态
+    enterDashboard();
+  } catch (e) {
+    token = null; // 未登录则停留在登录页
   }
 })();
 

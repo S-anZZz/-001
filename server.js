@@ -8,53 +8,98 @@ const { createMeeting } = require('./meeting');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 安全响应头：禁止 MIME 嗅探、禁止被 iframe 嵌入、限制资源来源
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'");
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 上传文件访问路由：按文件名从存储层取内容，磁盘模式与数据库模式走同一入口
-app.get('/uploads/:file', (req, res) => {
-  getFile(req.params.file).then((buffer) => { // 从存储层读取文件内容
-    if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
-    const ext = path.extname(req.params.file).toLowerCase(); // 取扩展名
-    res.type(ext || 'bin'); // 按扩展名设置 Content-Type，浏览器才会正确识别 PDF / Word / 图片
-    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(req.params.file)}`); // 支持中文文件名
-    res.send(buffer); // 输出文件二进制内容
-  }).catch(() => res.status(500).send('读取失败')); // 读取出错返回 500
-});
+// 上传文件名的白名单字符：不允许出现 / \ .. 等可用于目录穿越的字符
+const SAFE_FILE = /^[A-Za-z0-9._\-\u4e00-\u9fa5]+$/;
 
-function send(res, ok, data) {
-  res.status(ok ? 200 : 400).json({ ok, data });
+// 上传文件访问：必须登录，且文件名只能是存储层里的合法名字
+app.get('/uploads/:file', requireAuth(), wrap(async (req, res) => {
+  const file = String(req.params.file || '');
+  if (!SAFE_FILE.test(file) || file.includes('..')) return res.status(400).send('文件名不合法'); // 拒绝目录穿越
+  const buffer = await getFile(file); // 从存储层读取文件内容
+  if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
+  const ext = path.extname(file).toLowerCase(); // 取扩展名
+  res.type(ext || 'bin'); // 按扩展名设置 Content-Type
+  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file)}`); // 支持中文文件名
+  res.setHeader('Cache-Control', 'private, max-age=600'); // 个人资料不进入共享缓存
+  res.send(buffer); // 输出文件二进制内容
+}));
+
+// BizError：可安全回显给前端的业务异常
+class BizError extends Error {
+  constructor(message, status = 400) { super(message); this.status = status; }
 }
 
+// send：统一响应，可指定 HTTP 状态码（400 参数错误 / 401 未登录 / 403 无权限 / 500 服务器错误）
+function send(res, ok, data, status) {
+  res.status(status || (ok ? 200 : 400)).json({ ok, data });
+}
+
+// wrap：捕获异步异常；业务异常原样回显，系统异常只记日志并返回通用文案
 function wrap(fn) {
   return (req, res, next) => {
     Promise.resolve(fn(req, res, next)).catch((err) => {
-      console.error(err);
-      send(res, false, '服务器错误：' + (err.message || err));
+      if (err && (err.status || err instanceof BizError)) {
+        return send(res, false, err.message, err.status || 400); // 业务异常，允许回显
+      }
+      console.error('[server-error]', req.method, req.originalUrl, err && err.message); // 细节只进服务端日志
+      send(res, false, '服务器内部错误，请稍后重试', 500); // 不向前端暴露内部错误
     });
   };
 }
 
-async function currentUser(req) {
-  const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+// parseCookies：解析 Cookie 头，取出会话令牌
+function parseCookies(req) {
+  const raw = req.headers.cookie || '';
+  const out = {};
+  raw.split(';').forEach((pair) => {
+    const idx = pair.indexOf('=');
+    if (idx > 0) out[pair.slice(0, idx).trim()] = decodeURIComponent(pair.slice(idx + 1).trim());
+  });
+  return out;
+}
+
+// sessionUser：按会话令牌取用户，并校验会话未过期、账号仍为可用状态
+async function sessionUser(token) {
   if (!token) return null;
-  const [rows] = await pool.query('SELECT * FROM users WHERE token = ?', [token]);
+  const [rows] = await pool.query(
+    `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token = ? AND s.expires_at > NOW()`,
+    [token]
+  ); // 联表查询会话与用户
   const user = rows[0];
-  if (!user) return null; // 令牌不存在
-  const expires = user.token_expires_at ? new Date(user.token_expires_at).getTime() : 0; // 解析过期时间
-  if (expires && expires < Date.now()) { // 令牌已过期
-    await pool.query('UPDATE users SET token = NULL, token_expires_at = NULL WHERE id = ?', [user.id]); // 清理过期令牌
-    return null;
-  }
+  if (!user) return null; // 会话不存在或已过期
+  if (user.status !== 'active') return null; // 账号被停用/待审核时，旧令牌立即失效
   return user;
 }
 
+// currentUser：优先取 Authorization 头，其次取 HttpOnly Cookie
+async function currentUser(req) {
+  const header = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  const cookie = parseCookies(req).sid || '';
+  return sessionUser(header || cookie);
+}
+
+// requireAuth：校验登录态与角色，未登录返回 401，越权返回 403
 function requireAuth(roles) {
   return wrap(async (req, res, next) => {
     const user = await currentUser(req);
-    if (!user) return send(res, false, '请先登录');
-    if (roles && !roles.includes(user.role)) return send(res, false, '无权限');
+    if (!user) return send(res, false, '请先登录', 401);
+    if (roles && !roles.includes(user.role)) return send(res, false, '无权限访问', 403);
     req.user = user;
     next();
   });
@@ -64,17 +109,61 @@ async function notify(userId, type, message) {
   await pool.query('INSERT INTO notifications (user_id, type, message) VALUES (?,?,?)', [userId, type, message]);
 }
 
+// 各类上传的大小上限（字节）
+const MAX_IMAGE = 2 * 1024 * 1024; // 头像 2MB
+const MAX_DOC = 5 * 1024 * 1024; // 简历附件、许可证 5MB
+
+// 文件头（魔数）校验：防止把 exe 等文件改名后上传
+function magicOk(buffer, ext) {
+  const b = buffer;
+  const startsWith = (bytes) => bytes.every((v, i) => b[i] === v); // 逐字节比对
+  if (ext === 'pdf') return startsWith([0x25, 0x50, 0x44, 0x46]); // %PDF
+  if (ext === 'png') return startsWith([0x89, 0x50, 0x4e, 0x47]); // PNG
+  if (ext === 'jpg' || ext === 'jpeg') return startsWith([0xff, 0xd8, 0xff]); // JPEG
+  if (ext === 'gif') return startsWith([0x47, 0x49, 0x46, 0x38]); // GIF8
+  if (ext === 'webp') return startsWith([0x52, 0x49, 0x46, 0x46]) && b.slice(8, 12).toString() === 'WEBP'; // RIFF....WEBP
+  if (ext === 'docx') return startsWith([0x50, 0x4b, 0x03, 0x04]); // ZIP 头
+  if (ext === 'doc') return startsWith([0xd0, 0xcf, 0x11, 0xe0]); // OLE 复合文档
+  return false; // 未知类型一律拒绝
+}
+
+// saveBase64：校验扩展名、大小与文件头后写入存储层
+async function saveBase64(name, base64, allowed, maxBytes, label, prefix) {
+  if (!name) return null; // 未选择文件则跳过
+  const ext = (name.split('.').pop() || '').toLowerCase(); // 取扩展名
+  if (!allowed.includes(ext)) throw new BizError(`${label}格式不支持`, 400); // 扩展名白名单
+  let buffer;
+  try { buffer = Buffer.from(String(base64), 'base64'); } catch (e) { throw new BizError(`${label}内容无法解析`, 400); } // Base64 解码
+  if (!buffer.length) throw new BizError(`${label}内容为空`, 400); // 空文件
+  if (buffer.length > maxBytes) throw new BizError(`${label}不能超过 ${Math.round(maxBytes / 1024 / 1024)}MB`, 400); // 大小限制
+  if (!magicOk(buffer, ext)) throw new BizError(`${label}内容与扩展名不符`, 400); // 文件头校验
+  const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
+  const file = `${Date.now()}-${prefix}${safe}`; // 生成唯一文件名
+  return putFile(file, buffer); // 写入存储层（磁盘或数据库）
+}
+
 // 允许上传的头像格式
 const AVATAR_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp'];
 
-// saveImage：把前端传来的 base64 头像写入存储层，返回文件名
-async function saveImage(name, base64) {
-  if (!name) return null; // 未选择头像则跳过
-  const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
-  if (!AVATAR_EXT.includes(ext)) throw Object.assign(new Error('头像仅支持 png/jpg/gif/webp'), { status: 400 });
-  const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
-  const file = `${Date.now()}-${safe}`; // 生成唯一文件名，避免覆盖
-  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
+// saveImage：保存头像（≤2MB，校验文件头）
+function saveImage(name, base64) {
+  return saveBase64(name, base64, AVATAR_EXT, MAX_IMAGE, '头像', '');
+}
+
+// 简历附件允许的格式：PDF 与 Word
+const ALLOWED_EXT = ['pdf', 'doc', 'docx'];
+
+// saveAttachment：保存简历附件（≤5MB，校验文件头）
+function saveAttachment(name, base64) {
+  return saveBase64(name, base64, ALLOWED_EXT, MAX_DOC, '简历附件', '');
+}
+
+// 企业经营许可证允许的格式：PDF、Word 与图片
+const LICENSE_EXT = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg'];
+
+// saveLicense：保存经营许可证（≤5MB，校验文件头）
+function saveLicense(name, base64) {
+  return saveBase64(name, base64, LICENSE_EXT, MAX_DOC, '经营许可证', 'license-');
 }
 
 app.post('/api/register', wrap(async (req, res) => {
@@ -84,6 +173,9 @@ app.post('/api/register', wrap(async (req, res) => {
   if (!username || !password || !name) return send(res, false, '用户名、密码、姓名必填');
   // 密码长度校验：4~8 位之间
   if (password.length < 4 || password.length > 8) return send(res, false, '密码需为 4~8 位');
+  // 弱口令拦截：避免 1234、abcd 这类几乎等于没有的密码
+  const WEAK = ['1234', '123456', '0000', '1111', '6666', '8888', '4321', 'abcd', 'qwer', 'admin', 'root'];
+  if (WEAK.includes(String(password).toLowerCase())) return send(res, false, '密码过于简单，请更换更复杂的密码');
   // 角色校验：只允许求职者或企业
   if (!['seeker', 'company'].includes(role)) return send(res, false, '角色不合法');
   // 企业注册必须填写企业名称，否则无法区分招聘主体
@@ -153,46 +245,33 @@ app.post('/api/login', wrap(async (req, res) => {
     await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
   }
   const token = newToken(); // 生成登录令牌
-  await pool.query('UPDATE users SET token = ?, token_expires_at = DATE_ADD(NOW(), INTERVAL 7 DAY) WHERE id = ?', [token, user.id]); // 令牌 7 天有效
-  const { password: _p, password_hash: _ph, token: _t, token_expires_at: _e, ...safe } = user; // 去掉敏感字段
+  await pool.query(
+    'INSERT INTO sessions (user_id, token, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 7 DAY))',
+    [user.id, token]
+  ); // 令牌写入会话表，7 天有效，多设备可并存
+  res.cookie('sid', token, { // 同时写入 HttpOnly Cookie，前端脚本读不到
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 3600 * 1000,
+    secure: req.secure || req.headers['x-forwarded-proto'] === 'https',
+    path: '/'
+  });
+  const { password: _p, password_hash: _ph, token: _t, token_expires_at: _e, license_path: _l, ...safe } = user; // 去掉敏感字段
   send(res, true, { user: safe, token }); // 返回用户信息与令牌
 }));
 
 app.post('/api/logout', requireAuth(), wrap(async (req, res) => {
-  await pool.query('UPDATE users SET token = NULL WHERE id = ?', [req.user.id]); // 清空登录令牌
+  const header = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); // 取请求头令牌
+  const token = header || parseCookies(req).sid || ''; // 或取 Cookie 令牌
+  if (token) await pool.query('DELETE FROM sessions WHERE token = ?', [token]); // 只注销当前会话，其他设备不受影响
+  res.clearCookie('sid', { path: '/' }); // 清除 Cookie
   send(res, true, null); // 返回成功
 }));
 
 app.get('/api/me', requireAuth(), wrap(async (req, res) => {
-  const { password, token, ...safe } = req.user; // 去掉敏感字段
+  const { password, token, token_expires_at, ...safe } = req.user; // 去掉敏感字段
   send(res, true, safe); // 返回当前用户信息
 }));
-
-// 简历附件允许的格式：PDF 与 Word
-const ALLOWED_EXT = ['pdf', 'doc', 'docx'];
-
-// saveAttachment：保存简历附件并返回文件名
-async function saveAttachment(name, base64) {
-  if (!name) return null; // 未选择附件则跳过
-  const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
-  if (!ALLOWED_EXT.includes(ext)) throw Object.assign(new Error('仅支持 PDF / Word 附件'), { status: 400 });
-  const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
-  const file = `${Date.now()}-${safe}`; // 生成唯一文件名
-  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
-}
-
-// 企业经营许可证允许的格式：PDF、Word 与图片
-const LICENSE_EXT = ['pdf', 'doc', 'docx', 'png', 'jpg', 'jpeg'];
-
-// saveLicense：保存企业注册时上传的经营许可证并返回文件名
-async function saveLicense(name, base64) {
-  if (!name) return null; // 未上传许可证则跳过
-  const ext = (name.split('.').pop() || '').toLowerCase(); // 取文件扩展名
-  if (!LICENSE_EXT.includes(ext)) throw Object.assign(new Error('经营许可证仅支持 PDF / Word / 图片'), { status: 400 });
-  const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
-  const file = `${Date.now()}-license-${safe}`; // 生成唯一文件名，避免覆盖
-  return putFile(file, Buffer.from(base64, 'base64')); // 写入存储层（磁盘或数据库）
-}
 
 // 获取当前求职者的简历
 app.get('/api/resume/mine', requireAuth(['seeker']), wrap(async (req, res) => {
@@ -216,7 +295,8 @@ app.post('/api/resume', requireAuth(['seeker']), wrap(async (req, res) => {
   if (existing.length) { // 已有简历则更新
     await pool.query(
       `UPDATE resumes SET name=?, skills=?, experience=?, education=?,
-       attachment_name=?, attachment_path=COALESCE(?, attachment_path) WHERE user_id=?`,
+       attachment_name=COALESCE(?, attachment_name),
+       attachment_path=COALESCE(?, attachment_path) WHERE user_id=?`,
       [name, skills, experience, education, attachmentName || null, attachmentPath, req.user.id]
     );
   } else { // 没有简历则新建
@@ -232,14 +312,15 @@ app.post('/api/resume', requireAuth(['seeker']), wrap(async (req, res) => {
 // 搜索职位：支持关键词、地点、薪资、学历、经验筛选，仅返回已发布职位
 app.get('/api/jobs', wrap(async (req, res) => {
   // 支持关键词、地点、薪资、学历、经验筛选，并分页返回
-  const { keyword, location, minSalary, education, experience, sort } = req.query; // 解析筛选与排序条件
+  const { keyword, location, minSalary, maxSalary, education, experience, sort } = req.query; // 解析筛选与排序条件
   const page = Math.max(1, Number(req.query.page) || 1); // 页码，最小为 1
   const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 10)); // 每页条数，限制 1~50
   const where = []; // 动态条件集合
   const args = []; // 条件参数集合
   if (keyword) { where.push('(j.title LIKE ? OR j.requirements LIKE ?)'); args.push(`%${keyword}%`, `%${keyword}%`); } // 关键词匹配职位或要求
   if (location) { where.push('j.location = ?'); args.push(location); } // 按地点筛选
-  if (minSalary) { where.push('j.salary_max >= ?'); args.push(+minSalary); } // 按薪资上限筛选
+  if (minSalary) { where.push('j.salary_max >= ?'); args.push(+minSalary); } // 期望下限：职位上限不低于期望
+  if (maxSalary) { where.push('j.salary_min <= ?'); args.push(+maxSalary); } // 期望上限：职位下限不高于期望，形成区间重叠
   if (education) { where.push('j.education = ?'); args.push(education); } // 按学历筛选
   if (experience) { where.push('j.experience = ?'); args.push(experience); } // 按经验筛选
   const base = `FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status = 'published'`
@@ -257,7 +338,7 @@ app.get('/api/jobs', wrap(async (req, res) => {
 }));
 
 app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM jobs WHERE company_id = ? ORDER BY id DESC', [req.user.id]); // 查询该企业的职位
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE company_id = ? ORDER BY id DESC LIMIT 200', [req.user.id]); // 查询该企业的职位（上限 200 条）
   send(res, true, rows); // 返回职位列表
 }));
 
@@ -279,13 +360,15 @@ app.patch('/api/jobs/:id', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
   const job = rows[0]; // 取职位
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
-  if (job.status === 'offline') return send(res, false, '职位已下架，请先重新上架后再修改'); // 已下架职位不可直接修改
+  // 下架职位同样允许编辑，修改后可一键重新上架
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析修改内容
+  if (!title) return send(res, false, '职位标题必填'); // 标题必填
+  if (salaryMin && salaryMax && Number(salaryMin) > Number(salaryMax)) return send(res, false, '最低薪资不能高于最高薪资'); // 薪资区间校验
   await pool.query(
-    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?, status='published'
+    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?
      WHERE id=?`,
     [title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '', req.params.id]
-  ); // 更新职位内容并保持已发布状态
+  ); // 更新职位内容，状态保持不变（下架职位改完再上架）
   send(res, true, '职位已更新'); // 返回提示
 }));
 
@@ -330,7 +413,7 @@ app.get('/api/applications/mine', requireAuth(['seeker']), wrap(async (req, res)
     `SELECT a.*, j.title AS job_title, j.location, j.salary_min, j.salary_max,
             u.company_name AS company_name
      FROM applications a JOIN jobs j ON j.id = a.job_id JOIN users u ON u.id = a.company_id
-     WHERE a.seeker_id = ? ORDER BY a.id DESC`,
+     WHERE a.seeker_id = ? ORDER BY a.id DESC LIMIT 200`,
     [req.user.id]
   ); // 查询当前求职者的投递列表
   send(res, true, rows); // 返回投递记录
@@ -344,9 +427,9 @@ app.get('/api/applications/received', requireAuth(['company']), wrap(async (req,
             j.title AS job_title
      FROM applications a JOIN resumes r ON r.id = a.resume_id
      JOIN jobs j ON j.id = a.job_id
-     WHERE a.company_id = ? ORDER BY a.id DESC`,
+     WHERE a.company_id = ? ORDER BY a.id DESC LIMIT 200`,
     [req.user.id]
-  ); // 查询企业收到的投递
+  ); // 查询企业收到的投递（上限 200 条）
   send(res, true, rows); // 返回投递列表
 }));
 
@@ -399,13 +482,13 @@ app.get('/api/contact/requests', requireAuth(), wrap(async (req, res) => {
   const [mine] = await pool.query(
     `SELECT cr.*, u.name AS user_name, u.company_name, u.role
      FROM contact_requests cr JOIN users u ON u.id = cr.from_user_id
-     WHERE cr.to_user_id = ? AND cr.status = 'pending' ORDER BY cr.id DESC`,
+     WHERE cr.to_user_id = ? AND cr.status = 'pending' ORDER BY cr.id DESC LIMIT 100`,
     [req.user.id]
   ); // 查询收到的待处理请求
   const [sent] = await pool.query(
     `SELECT cr.*, u.name AS user_name, u.company_name, u.role
      FROM contact_requests cr JOIN users u ON u.id = cr.to_user_id
-     WHERE cr.from_user_id = ? ORDER BY cr.id DESC`,
+     WHERE cr.from_user_id = ? ORDER BY cr.id DESC LIMIT 100`,
     [req.user.id]
   ); // 查询已发送的请求
   send(res, true, { received: mine, sent }); // 返回两组数据
@@ -416,7 +499,7 @@ app.get('/api/contact/requests', requireAuth(), wrap(async (req, res) => {
 app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
   const peerId = Number(req.params.userId); // 对方用户主键
   if (!peerId) return send(res, false, '对方不存在'); // 参数校验
-  const [peer] = await pool.query('SELECT id, name, company_name, phone, role FROM users WHERE id = ?', [peerId]); // 查询对方信息
+  const [peer] = await pool.query('SELECT id, name, company_name, role FROM users WHERE id = ?', [peerId]); // 只取公开信息，手机号不随会话返回
   if (!peer.length) return send(res, false, '对方不存在'); // 校验对方存在
   const [rows] = await pool.query(
     `SELECT id, from_user_id, to_user_id, content, created_at
@@ -477,10 +560,20 @@ app.post('/api/notifications/read', requireAuth(), wrap(async (req, res) => {
   send(res, true, '已全部标记为已读'); // 返回提示
 }));
 
+// 企业端：重新上架已下架职位
+app.patch('/api/jobs/:id/republish', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
+  const job = rows[0]; // 取职位
+  if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限', 403); // 校验归属
+  if (job.status === 'published') return send(res, false, '该职位已经是发布状态'); // 幂等提示
+  await pool.query("UPDATE jobs SET status='published' WHERE id=?", [req.params.id]); // 置为已发布
+  send(res, true, '职位已重新上架'); // 返回提示
+}));
+
 // 管理员：查看企业注册列表
 app.get('/api/admin/companies', requireAuth(['admin']), wrap(async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT id, username, name, company_name, phone, status, created_at FROM users WHERE role='company' ORDER BY id DESC"
+    "SELECT id, username, name, company_name, phone, status, license_path, avatar_path, created_at FROM users WHERE role='company' ORDER BY id DESC LIMIT 200"
   ); // 查询所有企业用户
   send(res, true, rows); // 返回企业列表
 }));
@@ -497,8 +590,8 @@ app.post('/api/admin/companies/:id/approve', requireAuth(['admin']), wrap(async 
 // 管理员：查看全部用户
 app.get('/api/admin/users', requireAuth(['admin']), wrap(async (req, res) => {
   const [rows] = await pool.query(
-    'SELECT id, username, role, name, company_name, phone, status, created_at FROM users ORDER BY id DESC'
-  ); // 查询所有用户
+    'SELECT id, username, role, name, company_name, phone, status, created_at FROM users ORDER BY id DESC LIMIT 200'
+  ); // 查询所有用户（上限 200 条）
   send(res, true, rows); // 返回用户列表
 }));
 
@@ -509,6 +602,7 @@ app.patch('/api/admin/users/:id/status', requireAuth(['admin']), wrap(async (req
   if (!user || user.role === 'admin') return send(res, false, '用户不存在或不能修改管理员'); // 管理员不可修改
   const { status } = req.body || {}; // 解析目标状态
   if (!['active', 'pending', 'banned'].includes(status)) return send(res, false, '状态不合法'); // 校验状态合法性
+  if (status !== 'active') await pool.query('DELETE FROM sessions WHERE user_id = ?', [req.params.id]); // 停用账号立即吊销会话
   await pool.query('UPDATE users SET status=? WHERE id=?', [status, req.params.id]); // 更新用户状态
   send(res, true, '用户状态已更新'); // 返回提示
 }));

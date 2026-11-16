@@ -120,6 +120,18 @@ async function init() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
+  // sessions 表：登录会话（支持多设备并存、可单独注销、可整体吊销）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      token VARCHAR(128) NOT NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_session_token (token),
+      KEY idx_session_user (user_id)
+    )`);
+
   // messages 表：站内聊天消息，企业与求职者就联系方式、面试细节沟通
   await pool.query(`
     CREATE TABLE IF NOT EXISTS messages (
