@@ -68,6 +68,37 @@ async function login(e) {
   } catch (err) { showMsg(err.message, true); } // 错误提示
 }
 
+// sendRegisterCode：获取注册验证码（演示环境直接把验证码显示在页面上）
+async function sendRegisterCode(btn) {
+  const phone = document.getElementById('regPhoneNo').value.trim();
+  if (!/^1\d{10}$/.test(phone)) { showMsg('请输入正确的手机号', true); return; }
+  btn.disabled = true; // 防止连点
+  try {
+    const d = await api('/api/auth/code', { method: 'POST', body: JSON.stringify({ phone, purpose: 'register' }) });
+    document.getElementById('regCode').value = d.code; // 演示环境自动填入
+    document.getElementById('regCodeTip').textContent = '演示环境验证码：' + d.code + '（5 分钟内有效）';
+    setTimeout(() => { btn.disabled = false; }, 5000); // 5 秒后可重发
+  } catch (err) {
+    showMsg(err.message, true);
+    btn.disabled = false;
+  }
+}
+
+// forgotPassword：忘记密码（演示环境验证码直接返回）
+async function forgotPassword() {
+  const username = prompt('请输入要找回的用户名');
+  if (!username) return;
+  try {
+    const d = await api('/api/auth/forgot', { method: 'POST', body: JSON.stringify({ username }) });
+    const code = prompt(`验证码已发送至 ${d.phone}（演示环境：${d.code}）\n请输入验证码`);
+    if (!code) return;
+    const pwd = prompt('请输入新密码（4~8 位）');
+    if (!pwd) return;
+    const r = await api('/api/auth/reset', { method: 'POST', body: JSON.stringify({ username, code, newPassword: pwd }) });
+    showMsg(r, false); // 提示成功
+  } catch (err) { showMsg(err.message, true); }
+}
+
 // toggleCompanyFields：选择角色后显示或隐藏企业专属字段
 function toggleCompanyFields() {
   const isCompany = document.getElementById('regRole').value === 'company'; // 是否选择了企业
@@ -112,7 +143,9 @@ async function register(e) {
         companyName: role === 'company' ? regCompany.value : null, // 企业角色传企业名
         phone: regPhone.value,
         avatarName, avatarBase64, // 传递头像
-        licenseName, licenseBase64 // 传递经营许可证
+        licenseName, licenseBase64, // 传递经营许可证
+        phone: document.getElementById('regPhoneNo').value.trim(), // 手机号
+        code: document.getElementById('regCode').value.trim() // 手机验证码
       })
     });
     if (role === 'company') {
@@ -169,13 +202,16 @@ const ROLE_TABS = {
     { id: 'home', name: '工作台' },
     { id: 'jobs', name: '职位管理' },
     { id: 'apps', name: '收到的简历' },
+    { id: 'talent', name: '人才库' },
+    { id: 'profile', name: '企业资料' },
     { id: 'contact', name: '联系方式' },
     { id: 'notify', name: '通知' }
   ],
   admin: [
-    { id: 'home', name: '工作台' },
+    { id: 'home', name: '数据看板' },
     { id: 'companies', name: '企业审核' },
-    { id: 'users', name: '用户管理' }
+    { id: 'users', name: '用户管理' },
+    { id: 'logs', name: '操作日志' }
   ]
 };
 
@@ -198,6 +234,33 @@ async function openTab(id) {
 
 const PANELS = {};
 PANELS.home = async (p) => {
+  if (user.role === 'admin') { // 管理员首页展示运营看板
+    const d = await api('/api/admin/dashboard');
+    p.innerHTML = `
+      <div class="card">
+        <div class="card-head">运营数据看板</div>
+        <div class="card-body">
+          <div class="stat-grid">
+            <div class="stat-card">用户总数<b>${d.users.total || 0}</b></div>
+            <div class="stat-card">企业数<b>${d.users.company || 0}</b></div>
+            <div class="stat-card">求职者数<b>${d.users.seeker || 0}</b></div>
+            <div class="stat-card">职位总数<b>${d.jobs.total || 0}</b></div>
+            <div class="stat-card">在招职位<b>${d.jobs.published || 0}</b></div>
+            <div class="stat-card">急招职位<b>${d.jobs.urgent || 0}</b></div>
+            <div class="stat-card">投递总量<b>${d.apps.total || 0}</b></div>
+            <div class="stat-card">面试中<b>${d.apps.interview || 0}</b></div>
+            <div class="stat-card">已录用<b>${d.apps.accepted || 0}</b></div>
+            <div class="stat-card">近 7 天投递<b>${d.recentApplications || 0}</b></div>
+          </div>
+          <p style="margin-top:14px">
+            <button class="tiny" onclick="exportCsv('applications')">导出投递 CSV</button>
+            <button class="tiny ghost" onclick="exportCsv('jobs')">导出职位 CSV</button>
+            <button class="tiny ghost" onclick="exportCsv('users')">导出用户 CSV</button>
+          </p>
+        </div>
+      </div>`;
+    return;
+  }
   p.innerHTML = `
     <div class="card">
       <div class="card-head">工作台</div>
@@ -207,8 +270,13 @@ PANELS.home = async (p) => {
         ${user.role === 'seeker' ? '<p class="match">提示：先完善简历，再搜索职位并投递，系统会按技能标签给出匹配分与匹配理由。</p>' : ''}
         ${user.role === 'company' ? '<p class="match">提示：企业注册通过审核后即可登录；职位发布与修改无需管理员审核，提交后立即进入职位库。</p>' : ''}
         ${user.role === 'admin' ? '<p class="match">提示：审核企业注册申请，管理用户账号。</p>' : ''}
+        ${user.role !== 'admin' ? '<div id="recommendBox" style="margin-top:14px"></div>' : ''}
       </div>
     </div>`;
+  if (user.role !== 'admin') {
+    const box = document.getElementById('recommendBox');
+    if (box) box.innerHTML = await showRecommend(p); // 异步填充推荐
+  }
 };
 
 PANELS.resume = async (p) => {
@@ -452,6 +520,7 @@ async function searchJobs(page) {
         <option value="latest" ${jobSort === 'latest' ? 'selected' : ''}>最新发布</option>
         <option value="salaryDesc" ${jobSort === 'salaryDesc' ? 'selected' : ''}>薪资从高到低</option>
         <option value="salaryAsc" ${jobSort === 'salaryAsc' ? 'selected' : ''}>薪资从低到高</option>
+        <option value="match" ${jobSort === 'match' ? 'selected' : ''}>匹配度优先</option>
       </select>
     </div>
     <table class="grid">
@@ -667,6 +736,181 @@ function statusLabel(s) {
   return { submitted: '已投递', viewed: '已查看', interview: '面试中', accepted: '已录用', rejected: '未通过' }[s] || s;
 }
 
+
+// jobOp：职位运营（刷新 / 置顶 / 急招）
+async function jobOp(id, op) {
+  try {
+    await api(`/api/jobs/${id}/${op}`, { method: 'POST' }); // 调用对应接口
+    await openTab('jobs'); // 刷新列表
+  } catch (err) { alert(err.message); }
+}
+
+// batchOffline：批量下架勾选的职位
+async function batchOffline() {
+  const ids = Array.from(document.querySelectorAll('.jobPick:checked')).map((c) => Number(c.value)); // 收集勾选
+  if (!ids.length) return alert('请先勾选要下架的职位');
+  try {
+    const r = await api('/api/jobs/batch-offline', { method: 'POST', body: JSON.stringify({ ids }) });
+    alert(r);
+    await openTab('jobs');
+  } catch (err) { alert(err.message); }
+}
+
+// exportCsv：导出 CSV（浏览器直接用 Cookie 鉴权下载）
+function exportCsv(type) {
+  window.open('/api/admin/export?type=' + encodeURIComponent(type), '_blank'); // 新窗口下载
+}
+
+PANELS.logs = async (p) => {
+  const rows = await api('/api/admin/logs'); // 操作日志
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">操作日志（最近 200 条）</div>
+      <div class="card-body">
+        ${rows.length ? `
+        <table class="grid">
+          <tr><th>时间</th><th>用户</th><th>角色</th><th>方法</th><th>接口</th><th>状态码</th></tr>
+          ${rows.map((l) => `
+            <tr>
+              <td>${timeFmt(l.created_at)}</td>
+              <td>${esc(l.username || '-')}</td>
+              <td>${esc(l.role || '-')}</td>
+              <td>${esc(l.method)}</td>
+              <td class="match">${esc(l.path)}</td>
+              <td>${l.status}</td>
+            </tr>`).join('')}
+        </table>` : '<div class="empty">暂无日志</div>'}
+      </div>
+    </div>`;
+};
+
+PANELS.profile = async (p) => {
+  const c = await api('/api/company/profile'); // 企业资料
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">企业资料 ${c.verified ? '<span class="badge">已认证</span>' : '<span class="badge">待认证</span>'}</div>
+      <div class="card-body">
+        <div id="profileMsg"></div>
+        <form class="form" onsubmit="saveProfile(event)">
+          <div class="row">
+            <div><label>公司名称</label><input type="text" id="pCompany" value="${esc(c.company_name)}" required></div>
+            <div><label>联系人</label><input type="text" id="pContact" value="${esc(c.name)}"></div>
+          </div>
+          <div class="row">
+            <div><label>联系电话</label><input type="text" id="pPhone" value="${esc(c.phone)}"></div>
+            <div><label>企业头像</label><input type="file" id="pAvatar" accept=".png,.jpg,.jpeg,.gif,.webp"></div>
+          </div>
+          <div class="row">
+            <div><label>行业</label><input type="text" id="pIndustry" value="${esc(c.company_industry)}" placeholder="如：互联网"></div>
+            <div><label>规模</label>
+              <select id="pSize">
+                ${['', '1-20人', '20-99人', '100-499人', '500人以上'].map((v) => `<option value="${v}" ${c.company_size === v ? 'selected' : ''}>${v || '未填写'}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <label>公司地址</label>
+          <input type="text" id="pAddress" value="${esc(c.company_address)}" placeholder="如：上海市浦东新区">
+          <label>公司简介</label>
+          <textarea id="pIntro" placeholder="介绍主营业务、团队与文化">${esc(c.company_intro)}</textarea>
+          <p><button type="submit">保存资料</button></p>
+        </form>
+      </div>
+    </div>`;
+};
+
+// saveProfile：保存企业资料
+async function saveProfile(e) {
+  e.preventDefault();
+  const body = {
+    companyName: document.getElementById('pCompany').value,
+    contact: document.getElementById('pContact').value,
+    phone: document.getElementById('pPhone').value,
+    industry: document.getElementById('pIndustry').value,
+    size: document.getElementById('pSize').value,
+    address: document.getElementById('pAddress').value,
+    intro: document.getElementById('pIntro').value
+  };
+  const file = document.getElementById('pAvatar').files[0]; // 可选头像
+  if (file) { body.avatarName = file.name; body.avatarBase64 = await readFileAsBase64(file); }
+  try {
+    await api('/api/company/profile', { method: 'PATCH', body: JSON.stringify(body) });
+    await openTab('profile');
+  } catch (err) { document.getElementById('profileMsg').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+}
+
+PANELS.talent = async (p) => {
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">人才库</div>
+      <div class="card-body">
+        <div class="filters">
+          <div><label>技能（逗号分隔）</label><input type="text" id="tSkills" placeholder="如：JavaScript,Vue"></div>
+          <div><label>期望城市</label><input type="text" id="tCity" placeholder="如：上海"></div>
+          <div><label>学历</label>
+            <select id="tEdu"><option value="">不限</option><option>大专</option><option>本科</option><option>硕士</option></select>
+          </div>
+          <div><label>期望薪资下限</label><input type="number" id="tSalary" min="0"></div>
+          <div><label>关键词</label><input type="text" id="tKeyword" placeholder="姓名/项目/自我评价"></div>
+          <div><button onclick="searchTalent()">搜索</button></div>
+        </div>
+        <div id="talentTable"><div class="empty">输入条件后点击“搜索”，仅展示选择了“公开”的简历</div></div>
+      </div>
+    </div>`;
+};
+
+// searchTalent：按条件检索公开简历
+async function searchTalent() {
+  const q = new URLSearchParams();
+  const put = (k, id) => { const v = document.getElementById(id).value.trim(); if (v) q.set(k, v); };
+  put('skills', 'tSkills'); put('city', 'tCity'); put('education', 'tEdu');
+  put('minSalary', 'tSalary'); put('keyword', 'tKeyword');
+  const rows = await api('/api/talent?' + q.toString()); // 请求人才列表
+  const t = document.getElementById('talentTable');
+  if (!rows.length) { t.innerHTML = '<div class="empty">没有符合条件的公开简历</div>'; return; }
+  t.innerHTML = `
+    <table class="grid">
+      <tr><th>姓名</th><th>技能</th><th>经验</th><th>学历</th><th>期望</th><th>状态</th><th>操作</th></tr>
+      ${rows.map((r) => `
+        <tr>
+          <td><b>${esc(r.name)}</b></td>
+          <td class="match">${esc(r.skills)}</td>
+          <td>${esc(r.experience)}</td>
+          <td>${esc(r.education)}</td>
+          <td>${esc(r.expected_city || '-')} ${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
+          <td>${esc(jobStatusLabel(r.job_status))}</td>
+          <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+// jobStatusLabel：求职状态文案
+function jobStatusLabel(s) {
+  return { open: '在职-考虑机会', looking: '离职-随时到岗', closed: '暂不考虑' }[s] || '在职';
+}
+
+// 推荐候选人（企业）与推荐职位（求职者）
+async function showRecommend(p) {
+  if (user.role === 'company') {
+    const rows = await api('/api/recommend/talent');
+    return `<div class="card"><div class="card-head">为你推荐的候选人</div><div class="card-body">
+      ${rows.length ? `<table class="grid"><tr><th>姓名</th><th>技能</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
+        ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="match">${esc(r.skills)}</td>
+        <td><b>${r.match.score}</b></td><td class="match">${esc(r.match.reasons)}</td>
+        <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td></tr>`).join('')}</table>`
+        : '<div class="empty">暂无推荐</div>'}
+    </div></div>`;
+  }
+  const rows = await api('/api/recommend/jobs');
+  return `<div class="card"><div class="card-head">为你推荐的职位</div><div class="card-body">
+    ${rows.length ? `<table class="grid"><tr><th>职位</th><th>企业</th><th>薪资</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
+      ${rows.map((j) => `<tr><td><b>${esc(j.title)}</b></td><td>${esc(j.company)}</td>
+      <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td><td><b>${j.match.score}</b></td>
+      <td class="match">${esc(j.match.reasons)}</td>
+      <td><button class="tiny" onclick="applyJob(${j.id}, this)">投递</button></td></tr>`).join('')}</table>`
+      : '<div class="empty">完善简历后即可获得推荐</div>'}
+  </div></div>`;
+}
+
 // ---------------------------------------------------------------- 站内聊天
 // chatPeerId：当前会话的对方用户主键
 let chatPeerId = null;
@@ -695,6 +939,12 @@ async function openChat(peerId, peerName, prefill) {
         <button class="tiny ghost" onclick="closeChat()">关闭</button>
       </div>
       <div class="chat-body" id="chatBody"><p class="match">加载中…</p></div>
+      <div class="chat-quick">
+        <button class="tiny ghost" onclick="quickReply('您好，看到您的简历很感兴趣，方便聊一下吗？')">打个招呼</button>
+        <button class="tiny ghost" onclick="quickReply('方便的话，我们约个时间线上面试？')">约面试</button>
+        <button class="tiny ghost" onclick="quickReply('请问您目前的期望薪资是多少？')">问期望</button>
+        <button class="tiny ghost" onclick="quickReply('职位详情已发您，方便的话请回复是否感兴趣。')">发职位</button>
+      </div>
       <div class="chat-foot">
         <textarea id="chatInput" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
         <button onclick="sendChat()">发送</button>
@@ -709,6 +959,14 @@ async function openChat(peerId, peerName, prefill) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } // 回车发送
   });
+}
+
+// quickReply：快捷回复模板，填入输入框
+function quickReply(text) {
+  const input = document.getElementById('chatInput');
+  if (!input) return;
+  input.value = text; // 填入模板
+  input.focus(); // 聚焦便于直接发送
 }
 
 // closeChat：关闭聊天窗口
@@ -841,6 +1099,7 @@ async function companyJobs(p) {
       <div class="card-head">职位管理</div>
       <div class="card-body">
         <div id="jobMsg"></div>
+        <p><button class="tiny ghost" onclick="batchOffline()">批量下架选中职位</button></p>
         <button onclick="toggleJobForm()">＋ 发布新职位</button>
         <div class="card" id="jobForm" style="display:none;margin-top:12px">
           <div class="card-body">
@@ -924,17 +1183,22 @@ function renderJobsTable(jobs) {
   if (!jobs.length) { t.innerHTML = '<div class="empty">还没有发布职位</div>'; return; }
   t.innerHTML = `
     <table class="grid">
-      <tr><th>职位</th><th>地点</th><th>薪资</th><th>状态</th><th>操作</th></tr>
+      <tr><th>选择</th><th>职位</th><th>地点</th><th>薪资</th><th>投递数</th><th>状态</th><th>操作</th></tr>
       ${jobs.map((j) => `
         <tr>
-          <td><b>${esc(j.title)}</b></td>
+          <td><input type="checkbox" class="jobPick" value="${j.id}"></td>
+          <td><b>${esc(j.title)}</b>${j.is_top ? ' <span class="badge">置顶</span>' : ''}${j.is_urgent ? ' <span class="badge">急招</span>' : ''}</td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+          <td>${j.apply_count || 0}</td>
           <td><span class="badge">${{ offline: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
           <td>
             <button class="tiny" onclick="editJob(${j.id})">编辑</button>
+            <button class="tiny ghost" onclick="jobOp(${j.id},'refresh')">刷新</button>
+            <button class="tiny ghost" onclick="jobOp(${j.id},'top')">${j.is_top ? '取消置顶' : '置顶'}</button>
+            <button class="tiny ghost" onclick="jobOp(${j.id},'urgent')">${j.is_urgent ? '取消急招' : '急招'}</button>
             ${j.status === 'offline'
-              ? `<button class="tiny" onclick="republishJob(${j.id})">重新上架</button>`
+              ? `<button class="tiny" onclick="republishJob(${j.id})">上架</button>`
               : `<button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>`}
           </td>
         </tr>`).join('')}

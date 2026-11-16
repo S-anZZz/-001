@@ -19,6 +19,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// 操作日志：记录所有写操作，供管理员审计
+app.use((req, res, next) => {
+  if (!['POST', 'PATCH', 'DELETE', 'PUT'].includes(req.method) || !req.path.startsWith('/api/')) return next(); // 只记写操作
+  res.on('finish', () => {
+    pool.query(
+      'INSERT INTO operation_logs (user_id, role, method, path, status, ip) VALUES (?,?,?,?,?,?)',
+      [req.user ? req.user.id : null, req.user ? req.user.role : null, req.method, req.path, res.statusCode,
+       (req.headers['x-forwarded-for'] || req.ip || '').toString().slice(0, 60)]
+    ).catch(() => {}); // 日志失败不影响主流程
+  });
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -178,6 +191,12 @@ app.post('/api/register', wrap(async (req, res) => {
   if (WEAK.includes(String(password).toLowerCase())) return send(res, false, '密码过于简单，请更换更复杂的密码');
   // 角色校验：只允许求职者或企业
   if (!['seeker', 'company'].includes(role)) return send(res, false, '角色不合法');
+  // 手机号与验证码校验：没有验证码不允许注册
+  if (!/^1\d{10}$/.test(String(phone || ''))) return send(res, false, '请输入正确的手机号');
+  const codeOk = await checkCode(phone, 'register', req.body.code); // 校验注册验证码
+  if (!codeOk) return send(res, false, '手机验证码错误或已过期');
+  const [phoneDup] = await pool.query('SELECT id FROM users WHERE phone = ?', [phone]); // 手机号唯一
+  if (phoneDup.length) return send(res, false, '该手机号已注册');
   // 企业注册必须填写企业名称，否则无法区分招聘主体
   if (role === 'company' && !String(companyName || '').trim()) return send(res, false, '请填写企业名称');
   // 查询用户名是否已存在
@@ -327,13 +346,26 @@ app.get('/api/jobs', wrap(async (req, res) => {
     + (where.length ? ' AND ' + where.join(' AND ') : ''); // 公共 FROM 与 WHERE
   const [countRows] = await pool.query(`SELECT COUNT(*) AS total ${base}`, args); // 统计总数用于分页
   const total = countRows[0].total; // 总条数
-  const orderBy = sort === 'salaryDesc' ? 'j.salary_max DESC, j.id DESC'
-    : sort === 'salaryAsc' ? 'j.salary_min ASC, j.id ASC'
-    : 'j.id DESC'; // 排序策略：最新 / 薪资高低
+  if (sort === 'match' && req.user && req.user.role === 'seeker') {
+    // 相关度排序：取有主简历的求职者，按匹配分排序后再分页
+    const [resumes] = await pool.query('SELECT * FROM resumes WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1', [req.user.id]);
+    const resume = resumes[0];
+    if (resume) {
+      const [all] = await pool.query(
+        `SELECT j.*, u.company_name AS company, u.verified ${base} ORDER BY j.is_top DESC, j.id DESC LIMIT 300`, args
+      ); // 先取候选集
+      const scored = all.map((j) => ({ ...j, match: matchScore(resume, j) })) // 计算匹配度
+        .sort((a, b) => (b.is_top - a.is_top) || (b.match.score - a.match.score)); // 置顶优先，其次匹配度
+      const slice = scored.slice((page - 1) * pageSize, page * pageSize); // 分页
+      return send(res, true, { list: slice, total: scored.length, page, pageSize, pages: Math.max(1, Math.ceil(scored.length / pageSize)) });
+    }
+  }
   const [rows] = await pool.query(
-    `SELECT j.*, u.name AS company_name, u.company_name AS company ${base} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
+    `SELECT j.*, u.company_name AS company, u.verified,
+            (SELECT COUNT(*) FROM applications a WHERE a.job_id = j.id) AS apply_count
+     ${base} ORDER BY j.is_top DESC, COALESCE(j.refreshed_at, j.created_at) DESC, j.id DESC LIMIT ? OFFSET ?`,
     [...args, pageSize, (page - 1) * pageSize]
-  ); // 分页查询当前页数据
+  ); // 分页查询当前页数据（置顶优先、刷新时间排序）
   send(res, true, { list: rows, total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) }); // 返回列表与分页信息
 }));
 
@@ -361,6 +393,8 @@ app.patch('/api/jobs/:id', requireAuth(['company']), wrap(async (req, res) => {
   const job = rows[0]; // 取职位
   if (!job || job.company_id !== req.user.id) return send(res, false, '职位不存在或无权限'); // 校验归属
   // 下架职位同样允许编辑，修改后可一键重新上架
+  await pool.query('INSERT INTO job_history (job_id, actor_id, snapshot) VALUES (?,?,?)',
+    [job.id, req.user.id, JSON.stringify(job)]); // 保存修改前快照
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析修改内容
   if (!title) return send(res, false, '职位标题必填'); // 标题必填
   if (salaryMin && salaryMax && Number(salaryMin) > Number(salaryMax)) return send(res, false, '最低薪资不能高于最高薪资'); // 薪资区间校验
@@ -608,7 +642,7 @@ app.get('/api/admin/companies', requireAuth(['admin']), wrap(async (req, res) =>
 app.post('/api/admin/companies/:id/approve', requireAuth(['admin']), wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM users WHERE id=? AND role='company'", [req.params.id]); // 查询企业用户
   if (!rows.length) return send(res, false, '企业不存在'); // 校验存在性
-  await pool.query("UPDATE users SET status='active' WHERE id=?", [req.params.id]); // 置为已通过
+  await pool.query("UPDATE users SET status='active', verified=1 WHERE id=?", [req.params.id]); // 置为已通过并打认证标记
   await notify(req.params.id, 'approve', '企业注册已通过审核，可以登录并发布职位'); // 通知企业
   send(res, true, '企业注册已通过'); // 返回提示
 }));
@@ -830,6 +864,286 @@ app.post('/api/interviews/:id/respond', requireAuth(['seeker']), wrap(async (req
   const text = { confirm: '已确认', decline: '已拒绝', reschedule: '申请改约至 ' + String(newTime || '').replace('T', ' ') }[action]; // 通知文案
   await notify(itv.company_id, 'interview', `候选人${text}`); // 通知企业
   send(res, true, '已提交'); // 返回结果
+}));
+
+// ===================== 账号体系：手机验证码 / 找回密码 =====================
+
+// genCode：生成 6 位数字验证码
+function genCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// saveCode：把验证码写入 sms_codes，5 分钟有效
+async function saveCode(phone, purpose) {
+  const code = genCode(); // 生成验证码
+  await pool.query(
+    'INSERT INTO sms_codes (phone, code, purpose, expires_at) VALUES (?,?,?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))',
+    [phone, code, purpose]
+  ); // 落库
+  return code; // 返回验证码（演示环境直接回显）
+}
+
+// checkCode：校验验证码并标记已用
+async function checkCode(phone, purpose, code) {
+  const [rows] = await pool.query(
+    `SELECT id FROM sms_codes WHERE phone = ? AND purpose = ? AND code = ? AND used = 0 AND expires_at > NOW()
+     ORDER BY id DESC LIMIT 1`,
+    [phone, purpose, String(code || '')]
+  ); // 查未使用且未过期的验证码
+  if (!rows.length) return false; // 校验失败
+  await pool.query('UPDATE sms_codes SET used = 1 WHERE id = ?', [rows[0].id]); // 标记已用，防止重放
+  return true; // 校验通过
+}
+
+// POST /api/auth/code：发送验证码（演示环境不下发短信，直接把验证码返回给前端）
+app.post('/api/auth/code', wrap(async (req, res) => {
+  const { phone, purpose } = req.body || {}; // 手机号与用途
+  if (!/^1\d{10}$/.test(String(phone || ''))) return send(res, false, '请输入正确的手机号'); // 格式校验
+  if (!['register', 'reset'].includes(purpose)) return send(res, false, '用途不合法'); // 用途白名单
+  if (purpose === 'register') { // 注册时要保证手机号没被占用
+    const [dup] = await pool.query('SELECT id FROM users WHERE phone = ?', [phone]);
+    if (dup.length) return send(res, false, '该手机号已注册');
+  }
+  const code = await saveCode(phone, purpose); // 生成并保存
+  send(res, true, { phone, code, tip: '演示环境未接入短信网关，验证码直接返回' }); // 返回验证码
+}));
+
+// POST /api/auth/forgot：忘记密码，给注册手机号发送验证码
+app.post('/api/auth/forgot', wrap(async (req, res) => {
+  const { username } = req.body || {}; // 用户名
+  const [rows] = await pool.query('SELECT id, phone FROM users WHERE username = ?', [username || '']); // 查用户
+  const user = rows[0];
+  if (!user || !user.phone) return send(res, false, '该账号未绑定手机号，请联系管理员重置'); // 没有手机号无法自助找回
+  const code = await saveCode(user.phone, 'reset'); // 生成重置验证码
+  const masked = String(user.phone).replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'); // 手机号脱敏
+  send(res, true, { phone: masked, code, tip: '演示环境未接入短信网关，验证码直接返回' }); // 返回验证码
+}));
+
+// POST /api/auth/reset：用验证码重置密码
+app.post('/api/auth/reset', wrap(async (req, res) => {
+  const { username, code, newPassword } = req.body || {}; // 参数
+  if (!newPassword || newPassword.length < 4 || newPassword.length > 8) {
+    return send(res, false, '密码需为 4~8 位'); // 长度校验
+  }
+  const [rows] = await pool.query('SELECT id, phone FROM users WHERE username = ?', [username || '']); // 查用户
+  const user = rows[0];
+  if (!user) return send(res, false, '账号不存在'); // 账号校验
+  if (!(await checkCode(user.phone, 'reset', code))) return send(res, false, '验证码错误或已过期'); // 验证码校验
+  await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashPassword(newPassword), user.id]); // 更新密码
+  await pool.query('DELETE FROM sessions WHERE user_id = ?', [user.id]); // 吊销所有旧会话
+  send(res, true, '密码已重置，请重新登录'); // 返回结果
+}));
+
+// ===================== 企业资料与认证 =====================
+
+// GET /api/company/profile：企业资料
+app.get('/api/company/profile', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id, username, name, company_name, phone, avatar_path, license_path, verified,
+            company_intro, company_industry, company_size, company_address
+     FROM users WHERE id = ?`, [req.user.id]
+  ); // 只取企业资料相关字段
+  send(res, true, rows[0]); // 返回资料
+}));
+
+// PATCH /api/company/profile：企业修改自身资料
+app.patch('/api/company/profile', requireAuth(['company']), wrap(async (req, res) => {
+  const b = req.body || {}; // 请求体
+  const companyName = String(b.companyName || '').trim().slice(0, 128); // 公司名
+  if (!companyName) return send(res, false, '公司名称不能为空'); // 必填
+  let avatarPath = null;
+  if (b.avatarBase64) avatarPath = await saveImage(b.avatarName || 'avatar.png', b.avatarBase64); // 可选头像
+  await pool.query(
+    `UPDATE users SET company_name=?, name=?, phone=?, company_intro=?, company_industry=?,
+       company_size=?, company_address=?, avatar_path=COALESCE(?, avatar_path) WHERE id=?`,
+    [companyName, String(b.contact || '').trim().slice(0, 64), String(b.phone || '').trim().slice(0, 32),
+     String(b.intro || '').slice(0, 2000), String(b.industry || '').slice(0, 32),
+     String(b.size || '').slice(0, 32), String(b.address || '').slice(0, 64), avatarPath, req.user.id]
+  ); // 更新资料
+  send(res, true, '企业资料已更新'); // 返回结果
+}));
+
+// GET /api/company/:id：企业主页（求职者可见的公开信息）
+app.get('/api/company/:id', requireAuth(), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id, company_name, company_intro, company_industry, company_size, company_address, verified, name
+     FROM users WHERE id = ? AND role = 'company'`, [req.params.id]
+  ); // 只返回公开字段
+  if (!rows.length) return send(res, false, '企业不存在');
+  const [jobs] = await pool.query(
+    `SELECT id, title, location, salary_min, salary_max, is_urgent, is_top FROM jobs
+     WHERE company_id = ? AND status = 'published' ORDER BY is_top DESC, id DESC LIMIT 50`, [req.params.id]
+  ); // 该企业在招职位
+  send(res, true, { company: rows[0], jobs }); // 返回企业主页数据
+}));
+
+// ===================== 人才库与双向推荐 =====================
+
+// GET /api/talent：企业按条件搜索全站公开简历
+app.get('/api/talent', requireAuth(['company']), wrap(async (req, res) => {
+  const { skills, city, education, minExp, minSalary, keyword } = req.query; // 筛选条件
+  const where = ["r.visibility = 'public'", "u.role = 'seeker'", "u.status = 'active'"]; // 只搜公开且有效的简历
+  const args = []; // 参数
+  if (skills) { // 技能需全部命中
+    String(skills).split(/[,，]/).filter(Boolean).forEach((s) => {
+      where.push('r.skills LIKE ?'); args.push(`%${s.trim()}%`);
+    });
+  }
+  if (city) { where.push('r.expected_city LIKE ?'); args.push(`%${city}%`); } // 期望城市模糊匹配
+  if (education) { where.push('r.education = ?'); args.push(education); } // 学历
+  if (minExp) { where.push("(r.experience IS NULL OR r.experience <> '')"); } // 有经验描述即可
+  if (minSalary) { where.push('(r.expected_salary_max IS NULL OR r.expected_salary_max >= ?)'); args.push(+minSalary); } // 期望上限
+  if (keyword) { where.push('(r.self_eval LIKE ? OR r.project_exp LIKE ? OR r.name LIKE ?)'); args.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`); } // 关键词
+  const [rows] = await pool.query(
+    `SELECT r.id, r.user_id, r.title, r.name, r.skills, r.experience, r.education, r.expected_city,
+            r.expected_salary_min, r.expected_salary_max, r.available_time, r.job_status, r.self_eval
+     FROM resumes r JOIN users u ON u.id = r.user_id
+     WHERE ${where.join(' AND ')} ORDER BY r.id DESC LIMIT 100`, args
+  ); // 查询公开简历
+  send(res, true, rows); // 返回人才列表
+}));
+
+// GET /api/recommend/jobs：给求职者推荐职位（按主简历与职位的匹配分排序）
+app.get('/api/recommend/jobs', requireAuth(['seeker']), wrap(async (req, res) => {
+  const [resumes] = await pool.query('SELECT * FROM resumes WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1', [req.user.id]); // 主简历
+  const resume = resumes[0];
+  if (!resume) return send(res, true, []); // 没有简历就没有推荐
+  const [jobs] = await pool.query(
+    `SELECT j.*, u.company_name AS company, u.verified FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE j.status = 'published' ORDER BY j.id DESC LIMIT 200`
+  ); // 取候选职位
+  const scored = jobs.map((j) => ({ ...j, match: matchScore(resume, j) })) // 逐个打分
+    .sort((a, b) => b.match.score - a.match.score) // 按分数降序
+    .slice(0, 12); // 只取前 12 条
+  send(res, true, scored); // 返回推荐列表
+}));
+
+// GET /api/recommend/talent：给企业推荐候选人（按职位要求与简历的匹配分排序）
+app.get('/api/recommend/talent', requireAuth(['company']), wrap(async (req, res) => {
+  const [jobs] = await pool.query("SELECT * FROM jobs WHERE company_id = ? AND status = 'published' ORDER BY id DESC LIMIT 1", [req.user.id]); // 取最近发布的职位作为参照
+  const job = jobs[0];
+  if (!job) return send(res, true, []); // 没有职位则无推荐
+  const [resumes] = await pool.query(
+    `SELECT r.*, u.name AS seeker_name FROM resumes r JOIN users u ON u.id = r.user_id
+     WHERE r.visibility = 'public' AND u.status = 'active' ORDER BY r.id DESC LIMIT 200`
+  ); // 取公开简历
+  const scored = resumes.map((r) => ({ ...r, match: matchScore(r, job) })) // 打分
+    .sort((a, b) => b.match.score - a.match.score).slice(0, 10); // 取前 10
+  send(res, true, scored); // 返回推荐
+}));
+
+// GET /api/jobs/:id/similar：相似职位（同地点或技能重合）
+app.get('/api/jobs/:id/similar', wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 当前职位
+  const job = rows[0];
+  if (!job) return send(res, false, '职位不存在');
+  const [list] = await pool.query(
+    `SELECT j.*, u.company_name AS company FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE j.status = 'published' AND j.id <> ? AND (j.location = ? OR j.title LIKE ?)
+     ORDER BY j.id DESC LIMIT 6`,
+    [job.id, job.location || '', `%${(job.title || '').slice(0, 2)}%`]
+  ); // 同城或标题相近的职位
+  send(res, true, list); // 返回相似职位
+}));
+
+// ===================== 职位运营：刷新 / 置顶 / 急招 / 批量下架 =====================
+
+// POST /api/jobs/:id/refresh：刷新职位（排到前面）
+app.post('/api/jobs/:id/refresh', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ? AND company_id = ?', [req.params.id, req.user.id]); // 校验归属
+  if (!rows.length) return send(res, false, '职位不存在或无权限', 403);
+  await pool.query('UPDATE jobs SET refreshed_at = NOW() WHERE id = ?', [req.params.id]); // 记录刷新时间
+  send(res, true, '职位已刷新'); // 返回结果
+}));
+
+// POST /api/jobs/:id/top：置顶 / 取消置顶
+app.post('/api/jobs/:id/top', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ? AND company_id = ?', [req.params.id, req.user.id]); // 校验归属
+  if (!rows.length) return send(res, false, '职位不存在或无权限', 403);
+  const next = rows[0].is_top ? 0 : 1; // 切换状态
+  await pool.query('UPDATE jobs SET is_top = ? WHERE id = ?', [next, req.params.id]);
+  send(res, true, next ? '已置顶' : '已取消置顶'); // 返回结果
+}));
+
+// POST /api/jobs/:id/urgent：标记 / 取消急招
+app.post('/api/jobs/:id/urgent', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ? AND company_id = ?', [req.params.id, req.user.id]); // 校验归属
+  if (!rows.length) return send(res, false, '职位不存在或无权限', 403);
+  const next = rows[0].is_urgent ? 0 : 1; // 切换状态
+  await pool.query('UPDATE jobs SET is_urgent = ? WHERE id = ?', [next, req.params.id]);
+  send(res, true, next ? '已标记为急招' : '已取消急招'); // 返回结果
+}));
+
+// POST /api/jobs/batch-offline：批量下架
+app.post('/api/jobs/batch-offline', requireAuth(['company']), wrap(async (req, res) => {
+  const ids = (req.body && Array.isArray(req.body.ids)) ? req.body.ids.map(Number).filter(Boolean) : []; // 职位 ID 列表
+  if (!ids.length) return send(res, false, '请选择要下架的职位');
+  const [result] = await pool.query(
+    `UPDATE jobs SET status = 'offline' WHERE company_id = ? AND id IN (${ids.map(() => '?').join(',')})`,
+    [req.user.id, ...ids]
+  ); // 只允许下架自己的职位
+  send(res, true, `已下架 ${result.affectedRows} 个职位`); // 返回结果
+}));
+
+// ===================== 管理员：看板 / 日志 / 导出 =====================
+
+// GET /api/admin/dashboard：运营数据看板
+app.get('/api/admin/dashboard', requireAuth(['admin']), wrap(async (req, res) => {
+  const [[users]] = await pool.query("SELECT COUNT(*) AS total, SUM(status='active') AS active, SUM(role='company') AS company, SUM(role='seeker') AS seeker FROM users"); // 用户统计
+  const [[jobs]] = await pool.query("SELECT COUNT(*) AS total, SUM(status='published') AS published, SUM(is_urgent=1) AS urgent FROM jobs"); // 职位统计
+  const [[apps]] = await pool.query('SELECT COUNT(*) AS total, SUM(status=\'interview\') AS interview, SUM(status=\'accepted\') AS accepted FROM applications'); // 投递统计
+  const [[recent]] = await pool.query('SELECT COUNT(*) AS c FROM applications WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)'); // 近 7 天投递
+  send(res, true, { users, jobs, apps, recentApplications: recent.c }); // 返回统计
+}));
+
+// GET /api/admin/logs：操作日志
+app.get('/api/admin/logs', requireAuth(['admin']), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT l.*, u.username FROM operation_logs l LEFT JOIN users u ON u.id = l.user_id
+     ORDER BY l.id DESC LIMIT 200`
+  ); // 最近 200 条
+  send(res, true, rows); // 返回日志
+}));
+
+// GET /api/admin/export：导出 CSV（Excel 可直接打开）
+app.get('/api/admin/export', requireAuth(['admin']), wrap(async (req, res) => {
+  const type = String(req.query.type || 'applications'); // 导出类型
+  const map = { // 类型到 SQL 的映射
+    applications: `SELECT a.id, j.title AS job, u.company_name AS company, s.name AS seeker,
+                     a.status, a.match_score, a.created_at
+                   FROM applications a JOIN jobs j ON j.id = a.job_id
+                   JOIN users u ON u.id = a.company_id JOIN users s ON s.id = a.seeker_id ORDER BY a.id DESC`,
+    jobs: `SELECT j.id, j.title, j.location, j.salary_min, j.salary_max, j.status, u.company_name AS company, j.created_at
+           FROM jobs j JOIN users u ON u.id = j.company_id ORDER BY j.id DESC`,
+    users: `SELECT id, username, role, name, company_name, phone, status, created_at FROM users ORDER BY id DESC`
+  };
+  if (!map[type]) return send(res, false, '导出类型不支持');
+  const [rows] = await pool.query(map[type]); // 查询数据
+  const headers = rows.length ? Object.keys(rows[0]) : []; // 表头
+  const cell = (v) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`; // CSV 转义
+  const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => headers.map((h) => cell(r[h])).join(','))].join('\n'); // 加 BOM 便于 Excel 识别中文
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="addwork-${type}.csv"`);
+  res.send(csv); // 输出 CSV
+}));
+
+// ===================== 消息会话列表（含未读数） =====================
+
+// GET /api/messages/threads：我的会话列表与未读数
+app.get('/api/messages/threads', requireAuth(), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT t.peer_id, u.name AS peer_name, u.company_name, t.last_at, t.unread
+     FROM (
+       SELECT IF(from_user_id = ?, to_user_id, from_user_id) AS peer_id,
+              MAX(created_at) AS last_at,
+              SUM(CASE WHEN to_user_id = ? AND is_read = 0 THEN 1 ELSE 0 END) AS unread
+       FROM messages WHERE from_user_id = ? OR to_user_id = ?
+       GROUP BY peer_id
+     ) t JOIN users u ON u.id = t.peer_id
+     ORDER BY t.last_at DESC LIMIT 50`,
+    [req.user.id, req.user.id, req.user.id, req.user.id]
+  ); // 按对方聚合，统计未读
+  send(res, true, rows); // 返回会话列表
 }));
 
 // 服务启动：先初始化数据库与种子数据，再监听端口

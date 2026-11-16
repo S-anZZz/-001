@@ -55,6 +55,11 @@ async function init() {
       token_expires_at DATETIME,
       avatar_path VARCHAR(255),
       license_path VARCHAR(255),
+      verified TINYINT NOT NULL DEFAULT 0,
+      company_intro TEXT,
+      company_industry VARCHAR(32),
+      company_size VARCHAR(32),
+      company_address VARCHAR(64),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -98,6 +103,10 @@ async function init() {
       education VARCHAR(32),
       experience VARCHAR(32),
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      is_urgent TINYINT NOT NULL DEFAULT 0,
+      is_top TINYINT NOT NULL DEFAULT 0,
+      view_count INT NOT NULL DEFAULT 0,
+      refreshed_at DATETIME,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       KEY idx_job_company (company_id),
       KEY idx_job_status (status)
@@ -129,6 +138,10 @@ async function init() {
       to_user_id INT NOT NULL,
       job_id INT,
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      is_urgent TINYINT NOT NULL DEFAULT 0,
+      is_top TINYINT NOT NULL DEFAULT 0,
+      view_count INT NOT NULL DEFAULT 0,
+      refreshed_at DATETIME,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -142,6 +155,45 @@ async function init() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uk_session_token (token),
       KEY idx_session_user (user_id)
+    )`);
+
+  // sms_codes 表：注册与找回密码的手机验证码（演示环境不下发短信，接口直接返回）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS sms_codes (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      phone VARCHAR(32) NOT NULL,
+      code VARCHAR(8) NOT NULL,
+      purpose VARCHAR(16) NOT NULL,
+      used TINYINT NOT NULL DEFAULT 0,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_code_phone (phone, purpose)
+    )`);
+
+  // operation_logs 表：关键写操作的审计日志
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS operation_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT,
+      role VARCHAR(16),
+      method VARCHAR(8),
+      path VARCHAR(128),
+      status INT,
+      ip VARCHAR(64),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_log_user (user_id),
+      KEY idx_log_time (created_at)
+    )`);
+
+  // job_history 表：职位编辑历史快照
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS job_history (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      job_id INT NOT NULL,
+      actor_id INT,
+      snapshot TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_jobhis_job (job_id)
     )`);
 
   // resume_history 表：简历修改历史（保存修改前的快照）
@@ -187,6 +239,10 @@ async function init() {
       mode VARCHAR(16) NOT NULL DEFAULT 'online',
       link VARCHAR(255),
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      is_urgent TINYINT NOT NULL DEFAULT 0,
+      is_top TINYINT NOT NULL DEFAULT 0,
+      view_count INT NOT NULL DEFAULT 0,
+      refreshed_at DATETIME,
       seeker_note VARCHAR(255),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -269,6 +325,21 @@ async function init() {
     WHERE r.is_default = 0
       AND NOT EXISTS (SELECT 1 FROM (SELECT user_id FROM resumes WHERE is_default = 1) d WHERE d.user_id = r.user_id)
   `);
+
+  // 兼容旧库：企业资料与运营字段
+  for (const [col, ddl] of [
+    ['verified', "ADD COLUMN verified TINYINT NOT NULL DEFAULT 0"],
+    ['company_intro', "ADD COLUMN company_intro TEXT"],
+    ['company_industry', "ADD COLUMN company_industry VARCHAR(32)"],
+    ['company_size', "ADD COLUMN company_size VARCHAR(32)"],
+    ['company_address', "ADD COLUMN company_address VARCHAR(64)"],
+  ]) await ensureColumn('users', col, ddl); // 用户表补齐
+  for (const [col, ddl] of [
+    ['is_urgent', "ADD COLUMN is_urgent TINYINT NOT NULL DEFAULT 0"],
+    ['is_top', "ADD COLUMN is_top TINYINT NOT NULL DEFAULT 0"],
+    ['view_count', "ADD COLUMN view_count INT NOT NULL DEFAULT 0"],
+    ['refreshed_at', "ADD COLUMN refreshed_at DATETIME"],
+  ]) await ensureColumn('jobs', col, ddl); // 职位表补齐
 
   // 兼容旧库：令牌过期时间
   await ensureColumn('users', 'token_expires_at', "ADD COLUMN token_expires_at DATETIME");
