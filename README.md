@@ -23,7 +23,7 @@
 ## 技术栈
 
 - 后端：Node.js + Express + MySQL（`mysql2` 异步驱动）
-- 前端：原生 HTML / CSS / JavaScript（黑白色块、Excel 表格风格、表单为主）
+- 前端：原生 HTML / CSS / JavaScript（黑白色块、Excel 表格风格、表单为主；全局使用黑白山水背景图 + 半透明遮罩，保证卡片可读）
 - 数据存储：MySQL，库名 `add_work`
 - 部署：Render（Node 服务）+ TiDB Cloud（MySQL 协议兼容）+ 自定义域名 `addwork.us.ci`
 
