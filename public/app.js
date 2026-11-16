@@ -527,7 +527,9 @@ async function searchJobs(page) {
       <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>学历</th><th>经验</th><th>要求</th><th>操作</th></tr>
       ${jobs.map((j) => `
         <tr>
-          <td><b>${esc(j.title)}</b><div class="match">${timeFmt(j.created_at)}</div></td>
+          <td><b style="cursor:pointer" onclick="openJobDetail(${j.id})">${esc(j.title)}</b>
+              ${j.is_top ? '<span class="badge">置顶</span>' : ''}${j.is_urgent ? '<span class="badge">急招</span>' : ''}
+              <div class="match">${timeFmt(j.created_at)} · 浏览 ${j.view_count || 0}</div></td>
           <td>${esc(j.company || j.company_name)}</td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
@@ -909,6 +911,38 @@ async function showRecommend(p) {
       <td><button class="tiny" onclick="applyJob(${j.id}, this)">投递</button></td></tr>`).join('')}</table>`
       : '<div class="empty">完善简历后即可获得推荐</div>'}
   </div></div>`;
+}
+
+
+// openJobDetail：职位详情弹窗（含企业信息与相似职位）
+async function openJobDetail(id) {
+  try {
+    const d = await api(`/api/jobs/${id}`); // 职位详情
+    const sim = await api(`/api/jobs/${id}/similar`).catch(() => []); // 相似职位（失败不阻塞）
+    const mask = document.createElement('div');
+    mask.className = 'chat-mask';
+    mask.id = 'jobDetailMask';
+    mask.innerHTML = `
+      <div class="chat-box" style="width:640px">
+        <div class="chat-head"><b>${esc(d.title)}</b>
+          <button class="tiny ghost" onclick="document.getElementById('jobDetailMask').remove()">关闭</button></div>
+        <div class="chat-body" style="max-height:60vh">
+          <p><b>薪资：</b>${d.salary_min || 0}-${d.salary_max || '不限'} 元/月　
+             <b>地点：</b>${esc(d.location || '-')}　<b>学历：</b>${esc(d.education || '不限')}　
+             <b>经验：</b>${esc(d.experience || '不限')}</p>
+          <p><b>职位要求：</b>${esc(d.requirements || '未填写')}</p>
+          <p><b>企业：</b>${esc(d.company || '-')} ${d.verified ? '<span class="badge">已认证</span>' : ''}
+             ${d.company_size ? '　规模：' + esc(d.company_size) : ''}</p>
+          ${d.company_intro ? `<p class="match">${esc(d.company_intro)}</p>` : ''}
+          <p><b>相似职位：</b>${sim.length ? sim.map((x) => `<a class="file" href="javascript:openJobDetail(${x.id})">${esc(x.title)}</a>`).join(' ') : '暂无'}</p>
+        </div>
+        <div class="chat-foot">
+          <button onclick="applyJob(${d.id}, this)">投递该职位</button>
+          <button class="tiny ghost" onclick="toggleFavorite(${d.id})">收藏</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask); // 挂载弹窗
+  } catch (err) { alert(err.message); }
 }
 
 // ---------------------------------------------------------------- 站内聊天

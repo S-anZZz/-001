@@ -375,6 +375,18 @@ app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
 }));
 
 // 企业端：发布新职位，直接进入职位库（按最新需求，发布无需管理员审核）
+// GET /api/jobs/:id：职位详情（浏览数 +1）
+app.get('/api/jobs/:id', wrap(async (req, res) => {
+  if (!/^\d+$/.test(req.params.id)) return send(res, false, '职位不存在'); // 只接受数字 ID
+  const [rows] = await pool.query(
+    `SELECT j.*, u.company_name AS company, u.verified, u.company_intro, u.company_size, u.company_industry
+     FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.id = ?`, [req.params.id]
+  ); // 联表取企业与职位信息
+  if (!rows.length) return send(res, false, '职位不存在'); // 不存在直接返回
+  await pool.query('UPDATE jobs SET view_count = view_count + 1 WHERE id = ?', [req.params.id]); // 浏览数累加
+  send(res, true, rows[0]); // 返回详情
+}));
+
 app.post('/api/jobs', requireAuth(['company']), wrap(async (req, res) => {
   const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析职位参数
   if (!title) return send(res, false, '职位标题必填'); // 标题必填校验
@@ -555,6 +567,25 @@ app.get('/api/contact/requests', requireAuth(), wrap(async (req, res) => {
 }));
 
 // 回复联系方式请求（同意/拒绝）
+// ===================== 消息会话列表（含未读数） =====================
+
+// GET /api/messages/threads：我的会话列表与未读数
+app.get('/api/messages/threads', requireAuth(), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT t.peer_id, u.name AS peer_name, u.company_name, t.last_at, t.unread
+     FROM (
+       SELECT IF(from_user_id = ?, to_user_id, from_user_id) AS peer_id,
+              MAX(created_at) AS last_at,
+              SUM(CASE WHEN to_user_id = ? AND is_read = 0 THEN 1 ELSE 0 END) AS unread
+       FROM messages WHERE from_user_id = ? OR to_user_id = ?
+       GROUP BY peer_id
+     ) t JOIN users u ON u.id = t.peer_id
+     ORDER BY t.last_at DESC LIMIT 50`,
+    [req.user.id, req.user.id, req.user.id, req.user.id]
+  ); // 按对方聚合，统计未读
+  send(res, true, rows); // 返回会话列表
+}));
+
 // 站内聊天：读取与某人的会话记录（同时把对方发来的消息标记为已读）
 app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
   const peerId = Number(req.params.userId); // 对方用户主键
@@ -1125,25 +1156,6 @@ app.get('/api/admin/export', requireAuth(['admin']), wrap(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="addwork-${type}.csv"`);
   res.send(csv); // 输出 CSV
-}));
-
-// ===================== 消息会话列表（含未读数） =====================
-
-// GET /api/messages/threads：我的会话列表与未读数
-app.get('/api/messages/threads', requireAuth(), wrap(async (req, res) => {
-  const [rows] = await pool.query(
-    `SELECT t.peer_id, u.name AS peer_name, u.company_name, t.last_at, t.unread
-     FROM (
-       SELECT IF(from_user_id = ?, to_user_id, from_user_id) AS peer_id,
-              MAX(created_at) AS last_at,
-              SUM(CASE WHEN to_user_id = ? AND is_read = 0 THEN 1 ELSE 0 END) AS unread
-       FROM messages WHERE from_user_id = ? OR to_user_id = ?
-       GROUP BY peer_id
-     ) t JOIN users u ON u.id = t.peer_id
-     ORDER BY t.last_at DESC LIMIT 50`,
-    [req.user.id, req.user.id, req.user.id, req.user.id]
-  ); // 按对方聚合，统计未读
-  send(res, true, rows); // 返回会话列表
 }));
 
 // 服务启动：先初始化数据库与种子数据，再监听端口
