@@ -192,12 +192,13 @@ app.post('/api/register', wrap(async (req, res) => {
   if (WEAK.includes(String(password).toLowerCase())) return send(res, false, '密码过于简单，请更换更复杂的密码');
   // 角色校验：只允许求职者或企业
   if (!['seeker', 'company'].includes(role)) return send(res, false, '角色不合法');
-  // 手机号与验证码校验：没有验证码不允许注册
-  if (!/^1\d{10}$/.test(String(phone || ''))) return send(res, false, '请输入正确的手机号');
-  const codeOk = await checkCode(phone, 'register', req.body.code); // 校验注册验证码
-  if (!codeOk) return send(res, false, '手机验证码错误或已过期');
-  const [phoneDup] = await pool.query('SELECT id FROM users WHERE phone = ?', [phone]); // 手机号唯一
-  if (phoneDup.length) return send(res, false, '该手机号已注册');
+  // 手机号改为可选：填了才校验格式与唯一性（用于后续找回密码）
+  const phoneVal = String(phone || '').trim();
+  if (phoneVal && !/^1\d{10}$/.test(phoneVal)) return send(res, false, '手机号格式不正确');
+  if (phoneVal) {
+    const [phoneDup] = await pool.query('SELECT id FROM users WHERE phone = ?', [phoneVal]); // 手机号唯一
+    if (phoneDup.length) return send(res, false, '该手机号已被使用'); // 重复提示
+  }
   // 企业注册必须填写企业名称，否则无法区分招聘主体
   if (role === 'company' && !String(companyName || '').trim()) return send(res, false, '请填写企业名称');
   // 查询用户名是否已存在
@@ -227,7 +228,7 @@ app.post('/api/register', wrap(async (req, res) => {
   const [info] = await pool.query(
     `INSERT INTO users (username, password, role, name, company_name, phone, status, avatar_path, license_path)
      VALUES (?,?,?,?,?,?,?,?,?)`,
-    [username, hashPassword(password), role, name, companyName || null, phone || null, status, avatarPath, licensePath]
+    [username, hashPassword(password), role, name, companyName || null, phoneVal || null, status, avatarPath, licensePath]
   );
   // 查询新用户信息返回给前端
   const [users] = await pool.query(
@@ -497,6 +498,16 @@ app.get('/api/applications/received', requireAuth(['company']), wrap(async (req,
      WHERE a.company_id = ? ORDER BY a.id DESC LIMIT 200`,
     [req.user.id]
   ); // 查询企业收到的投递（上限 200 条）
+  if (FILE_MODE === 'db') { // 数据库存储模式：核对文件是否还在
+    const names = rows.map((r) => r.attachment_path).filter(Boolean); // 取出附件名
+    if (names.length) {
+      const [files] = await pool.query(
+        `SELECT name FROM files WHERE name IN (${names.map(() => '?').join(',')})`, names
+      ); // 查询存在的文件
+      const set = new Set(files.map((f) => f.name)); // 转成集合
+      rows.forEach((r) => { r.attachment_exists = r.attachment_path ? set.has(r.attachment_path) : false; }); // 标记是否存在
+    }
+  }
   send(res, true, rows); // 返回投递列表
 }));
 

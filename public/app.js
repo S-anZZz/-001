@@ -18,10 +18,13 @@ async function api(path, options = {}) {
 }
 
 // fileLink：把 /uploads 下的文件名渲染成可点击的附件链接（自动处理中文与空格）
-function fileLink(name, path) {
+function fileLink(name, path, exists) {
   if (!path) return '<span class="match">未上传</span>'; // 没有附件
+  if (exists === false) return '<span class="match">附件已失效（早期上传的文件未迁移）</span>'; // 文件不存在
   const label = esc(name || path); // 展示用的文件名
-  return `<a class="file" href="/uploads/${encodeURIComponent(path)}" target="_blank" rel="noopener">📎 ${label}</a>`;
+  const isWord = /\.(doc|docx)$/i.test(path); // Word 无法在浏览器内预览
+  const tip = isWord ? '点击下载（Word 不支持在线预览）' : '点击在新标签页预览 / 下载';
+  return `<a class="file" href="/uploads/${encodeURIComponent(path)}" target="_blank" rel="noopener" title="${tip}">📎 ${label}</a>`;
 }
 
 // jobTypeLabel：职位类型文案
@@ -71,22 +74,6 @@ async function login(e) {
     token = d.token; user = d.user; // 仅在内存中保存令牌与用户
     enterDashboard(); // 进入工作台
   } catch (err) { showMsg(err.message, true); } // 错误提示
-}
-
-// sendRegisterCode：获取注册验证码（演示环境直接把验证码显示在页面上）
-async function sendRegisterCode(btn) {
-  const phone = document.getElementById('regPhoneNo').value.trim();
-  if (!/^1\d{10}$/.test(phone)) { showMsg('请输入正确的手机号', true); return; }
-  btn.disabled = true; // 防止连点
-  try {
-    const d = await api('/api/auth/code', { method: 'POST', body: JSON.stringify({ phone, purpose: 'register' }) });
-    document.getElementById('regCode').value = d.code; // 演示环境自动填入
-    document.getElementById('regCodeTip').textContent = '演示环境验证码：' + d.code + '（5 分钟内有效）';
-    setTimeout(() => { btn.disabled = false; }, 5000); // 5 秒后可重发
-  } catch (err) {
-    showMsg(err.message, true);
-    btn.disabled = false;
-  }
 }
 
 // forgotPassword：忘记密码（演示环境验证码直接返回）
@@ -148,9 +135,7 @@ async function register(e) {
         companyName: role === 'company' ? regCompany.value : null, // 企业角色传企业名
         phone: regPhone.value,
         avatarName, avatarBase64, // 传递头像
-        licenseName, licenseBase64, // 传递经营许可证
-        phone: document.getElementById('regPhoneNo').value.trim(), // 手机号
-        code: document.getElementById('regCode').value.trim() // 手机验证码
+        licenseName, licenseBase64 // 传递经营许可证
       })
     });
     if (role === 'company') {
@@ -1378,7 +1363,7 @@ PANELS.apps = async (p) => {
             <tr>
               <td><b>${esc(a.candidate)}</b></td>
               <td>${esc(a.job_title)}</td>
-              <td>${fileLink(a.attachment_name, a.attachment_path)}</td>
+              <td>${fileLink(a.attachment_name, a.attachment_path, a.attachment_exists)}</td>
               <td>${esc(a.skills)}</td>
               <td>${esc(a.experience)}</td>
               <td>${esc(a.education)}</td>
