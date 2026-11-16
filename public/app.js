@@ -343,6 +343,98 @@ function statusLabel(s) {
   return { submitted: '已投递', viewed: '已查看', interview: '面试中', accepted: '已录用', rejected: '未通过' }[s] || s;
 }
 
+// ---------------------------------------------------------------- 站内聊天
+// chatPeerId：当前会话的对方用户主键
+let chatPeerId = null;
+
+// 组装企业联系方式文本，供“发布联系方式”时预填
+function contactText() {
+  const lines = ['【联系方式】'];
+  lines.push((user.company_name || user.name || '') + (user.company_name ? ' · 联系人：' + (user.name || '') : '')); // 企业名与联系人
+  lines.push('电话：' + (user.phone || '未填写')); // 联系电话
+  return lines.join('\n');
+}
+
+// openChat：打开与某人的聊天窗口（peerName 仅用于标题，prefill 为预填内容）
+async function openChat(peerId, peerName, prefill) {
+  if (!peerId) return; // 参数保护
+  chatPeerId = Number(peerId); // 记住当前会话对象
+  const old = document.getElementById('chatMask');
+  if (old) old.remove(); // 关闭已有窗口，避免叠加
+  const mask = document.createElement('div');
+  mask.className = 'chat-mask';
+  mask.id = 'chatMask';
+  mask.innerHTML = `
+    <div class="chat-box">
+      <div class="chat-head">
+        <b>与 ${esc(peerName || '对方')} 的会话</b>
+        <button class="tiny ghost" onclick="closeChat()">关闭</button>
+      </div>
+      <div class="chat-body" id="chatBody"><p class="match">加载中…</p></div>
+      <div class="chat-foot">
+        <textarea id="chatInput" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button onclick="sendChat()">发送</button>
+      </div>
+      <div id="chatMsg"></div>
+    </div>`;
+  document.body.appendChild(mask); // 挂到页面上
+  if (prefill) document.getElementById('chatInput').value = prefill; // 预填联系方式
+  await loadChat(); // 拉取历史消息
+  const input = document.getElementById('chatInput');
+  input.focus(); // 自动聚焦输入框
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } // 回车发送
+  });
+}
+
+// closeChat：关闭聊天窗口
+function closeChat() {
+  const mask = document.getElementById('chatMask');
+  if (mask) mask.remove(); // 从页面移除
+  chatPeerId = null; // 清空会话对象
+}
+
+// loadChat：拉取并渲染当前会话的消息
+async function loadChat() {
+  const box = document.getElementById('chatBody');
+  if (!box) return;
+  try {
+    const d = await api('/api/messages/' + chatPeerId); // 请求会话记录
+    const msgs = d.messages || [];
+    if (!msgs.length) {
+      box.innerHTML = '<div class="empty">还没有消息，发出第一条联系方式吧</div>'; // 空会话提示
+      return;
+    }
+    box.innerHTML = msgs.map((m) => `
+      <div class="chat-line ${m.from_user_id === user.id ? 'me' : 'peer'}">
+        <div class="chat-bubble">${esc(m.content).replace(/\n/g, '<br>')}</div>
+        <div class="chat-time">${esc(String(m.created_at || '').replace('T', ' ').slice(0, 16))}</div>
+      </div>`).join(''); // 自己的消息靠右、对方靠左
+    box.scrollTop = box.scrollHeight; // 滚动到最新一条
+  } catch (err) {
+    box.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 加载失败提示
+  }
+}
+
+// sendChat：发送当前输入框里的消息
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const tip = document.getElementById('chatMsg');
+  const content = input.value.trim(); // 取输入内容
+  if (!content) { tip.innerHTML = '<div class="msg err">请输入消息内容</div>'; return; } // 空内容拦截
+  try {
+    await api('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify({ toUserId: chatPeerId, content }) // 提交接收方与内容
+    });
+    input.value = ''; // 清空输入框
+    tip.innerHTML = ''; // 清除提示
+    await loadChat(); // 重新拉取会话
+  } catch (err) {
+    tip.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 发送失败提示
+  }
+}
+
 PANELS.contact = async (p) => {
   const d = await api('/api/contact/requests');
   const rows = [];
@@ -354,19 +446,24 @@ PANELS.contact = async (p) => {
       <td>
         <button class="tiny" onclick="respondContact(${r.id}, true, this)">同意</button>
         <button class="tiny ghost" onclick="respondContact(${r.id}, false, this)">拒绝</button>
+        <button class="tiny ghost" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}')">聊天</button>
+        ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
       </td></tr>`).join(''));
   }
   const sentRows = d.sent.map((r) => `
     <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
     <td>${esc(r.company_name || '-')}</td>
-    <td><span class="badge">${r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝'}</span></td></tr>`).join('');
+    <td><span class="badge">${r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝'}</span>
+      <button class="tiny ghost" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}')">聊天</button>
+      ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
+    </td></tr>`).join('');
   p.innerHTML = `
     <div class="card">
       <div class="card-head">交换联系方式</div>
       <div class="card-body">
         <div id="contactMsg"></div>
         ${d.received.length ? `<h4>待处理请求</h4><table class="grid">${rows.join('')}</table>` : '<p class="match">暂无待处理的请求。</p>'}
-        ${d.sent.length ? `<h4>已发送请求</h4><table class="grid"><tr><th>对方</th><th>角色</th><th>企业</th><th>状态</th></tr>${sentRows}</table>` : ''}
+        ${d.sent.length ? `<h4>已发送请求</h4><table class="grid"><tr><th>对方</th><th>角色</th><th>企业</th><th>状态 / 聊天</th></tr>${sentRows}</table>` : ''}
       </div>
     </div>`;
 };
@@ -389,7 +486,7 @@ PANELS.notify = async (p) => {
       <div class="card-body">
         ${list.length ? list.map((n) => `
           <div class="msg" style="border-left:4px solid #000;margin-bottom:8px">
-            <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果' }[n.type] || n.type}</b>
+            <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息' }[n.type] || n.type}</b>
             <span class="match"> · ${esc(n.created_at)}</span>
             <div>${esc(n.message)}</div>
           </div>`).join('') : '<div class="empty">暂无通知</div>'}

@@ -369,6 +369,41 @@ app.get('/api/contact/requests', requireAuth(), wrap(async (req, res) => {
 }));
 
 // 回复联系方式请求（同意/拒绝）
+// 站内聊天：读取与某人的会话记录（同时把对方发来的消息标记为已读）
+app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
+  const peerId = Number(req.params.userId); // 对方用户主键
+  if (!peerId) return send(res, false, '对方不存在'); // 参数校验
+  const [peer] = await pool.query('SELECT id, name, company_name, phone, role FROM users WHERE id = ?', [peerId]); // 查询对方信息
+  if (!peer.length) return send(res, false, '对方不存在'); // 校验对方存在
+  const [rows] = await pool.query(
+    `SELECT id, from_user_id, to_user_id, content, created_at
+     FROM messages
+     WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)
+     ORDER BY id ASC LIMIT 200`,
+    [req.user.id, peerId, peerId, req.user.id]
+  ); // 查询双向会话，按时间正序
+  await pool.query('UPDATE messages SET is_read = 1 WHERE to_user_id = ? AND from_user_id = ?', [req.user.id, peerId]); // 进入会话即标记已读
+  send(res, true, { peer: peer[0], messages: rows }); // 返回对方信息与消息列表
+}));
+
+// 站内聊天：发送消息
+app.post('/api/messages', requireAuth(), wrap(async (req, res) => {
+  const { toUserId, content, jobId } = req.body || {}; // 解析接收方、内容与关联职位
+  const text = String(content || '').trim(); // 去掉首尾空白
+  if (!toUserId) return send(res, false, '请选择接收方'); // 接收方必填
+  if (!text) return send(res, false, '请输入消息内容'); // 内容必填
+  if (text.length > 500) return send(res, false, '消息过长（最多 500 字）'); // 长度限制
+  const [peer] = await pool.query('SELECT id, name FROM users WHERE id = ?', [toUserId]); // 查询接收方
+  if (!peer.length) return send(res, false, '对方不存在'); // 校验接收方存在
+  const [info] = await pool.query(
+    'INSERT INTO messages (from_user_id, to_user_id, job_id, content) VALUES (?,?,?,?)',
+    [req.user.id, toUserId, jobId || null, text]
+  ); // 写入消息
+  await notify(toUserId, 'message', `${req.user.name}${req.user.company_name ? '（' + req.user.company_name + '）' : ''} 给你发来一条消息`); // 站内通知对方
+  const [rows] = await pool.query('SELECT id, from_user_id, to_user_id, content, created_at FROM messages WHERE id = ?', [info.insertId]); // 取回新消息
+  send(res, true, rows[0]); // 返回新消息
+}));
+
 app.post('/api/contact/requests/:id/respond', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM contact_requests WHERE id = ?', [req.params.id]); // 查询请求
   const reqRow = rows[0]; // 取请求

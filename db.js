@@ -119,6 +119,20 @@ async function init() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
+  // messages 表：站内聊天消息，企业与求职者就联系方式、面试细节沟通
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      from_user_id INT NOT NULL,
+      to_user_id INT NOT NULL,
+      job_id INT,
+      content TEXT NOT NULL,
+      is_read TINYINT NOT NULL DEFAULT 0,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_msg_from (from_user_id),
+      KEY idx_msg_to (to_user_id)
+    )`);
+
   // notifications 表：系统通知，如投递动态、面试邀约、审核结果
   await pool.query(`
     CREATE TABLE IF NOT EXISTS notifications (
