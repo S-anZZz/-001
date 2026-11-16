@@ -4,13 +4,21 @@
 
 ## 线上访问
 
-| 项目 | 地址 |
-| --- | --- |
-| 公网地址 | **https://addwork.us.ci** |
-| 部署方式 | Render 免费 Web 服务 + TiDB Cloud 免费 MySQL |
-| 部署文档 | [DEPLOY.md](./DEPLOY.md) |
+**https://addwork.us.ci**（已上线，可直接访问）
 
-> 免费实例 15 分钟无流量会休眠，首次打开约需 1 分钟唤醒。
+| 项目 | 状态 |
+| --- | --- |
+| 域名解析 | `addwork.us.ci` → CNAME `addwork.onrender.com` → `216.24.57.16 / .18`（Cloudflare） |
+| HTTPS | 已启用，HTTP 自动 301 跳转到 HTTPS |
+| 证书 | `CN=addwork.us.ci`，签发者 Google Trust Services (WE1)，有效期至 2027-02-14 |
+| 应用托管 | Render 免费 Web 服务（Node 20，新加坡节点） |
+| 数据库 | TiDB Cloud Starter（MySQL 协议兼容，TLS 连接） |
+| 自动部署 | 推送到 `main` 分支后 Render 自动构建并发布 |
+| 健康检查 | `GET /` 与 `GET /api/jobs` 均可正常返回 |
+
+> 免费实例 15 分钟无流量会休眠，首次打开约需 1 分钟唤醒；冷启动后的第一次请求偶尔会超时，重试即可。
+
+部署文档见 [DEPLOY.md](./DEPLOY.md)。
 
 ## 技术栈
 
