@@ -10,6 +10,7 @@
   <header>
     <div class="brand">add work <small>在线求职招聘系统</small></div>
     <div class="user-box" id="userBox" style="display:none">
+      <img id="userAvatar" src="" alt="" style="width:26px;height:26px;border:1px solid #fff;border-radius:4px;object-fit:cover">
       <span id="userLabel"></span>
       <button class="ghost tiny" onclick="logout()">退出登录</button>
     </div>
@@ -44,7 +45,11 @@
           </div>
           <div class="row">
             <div><label>用户名</label><input type="text" id="regUser" required></div>
-            <div><label>密码</label><input type="password" id="regPwd" required></div>
+            <div><label>密码（4~8位）</label><input type="password" id="regPwd" minlength="4" maxlength="8" required></div>
+          </div>
+          <div class="row">
+            <div><label>确认密码</label><input type="password" id="regPwd2" minlength="4" maxlength="8" required></div>
+            <div><label>头像（可选）</label><input type="file" id="regAvatar" accept=".png,.jpg,.jpeg,.gif,.webp"></div>
           </div>
           <div class="row" id="companyFields" style="display:none">
             <div><label>企业名称</label><input type="text" id="regCompany"></div>

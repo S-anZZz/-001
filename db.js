@@ -1,19 +1,24 @@
-const mysql = require('mysql2/promise');
-const crypto = require('crypto');
+// db.js：MySQL 数据库连接与建表、初始化种子数据
+const mysql = require('mysql2/promise'); // mysql2 异步驱动，提供 Promise 版查询接口
+const crypto = require('crypto'); // 加密工具，用于生成密码哈希与登录令牌
 
+// 数据库连接配置，默认使用 AGENTS.md 指定的 root 账号
 const DB_CONFIG = {
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER || 'addwork',
-  password: process.env.DB_PASSWORD || 'AddWork@2026',
-  database: process.env.DB_NAME || 'add_work',
-  connectionLimit: 10,
-  charset: 'utf8mb4'
+  host: process.env.DB_HOST || '127.0.0.1', // 主机地址，默认本机
+  port: Number(process.env.DB_PORT || 3306), // 端口，默认 3306
+  user: process.env.DB_USER || 'root', // 用户名，默认 root
+  password: process.env.DB_PASSWORD || '808080', // 密码，默认 808080
+  database: process.env.DB_NAME || 'add_work', // 数据库名，默认 add_work
+  connectionLimit: 10, // 连接池最大连接数
+  charset: 'utf8mb4' // 字符集，支持中文
 };
 
+// 创建 MySQL 连接池，供所有路由复用
 const pool = mysql.createPool(DB_CONFIG);
 
+// 初始化函数：建表并写入演示数据
 async function init() {
+  // users 表：用户表，区分求职者/企业/管理员三种角色
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -25,9 +30,11 @@ async function init() {
       phone VARCHAR(32),
       status VARCHAR(16) NOT NULL DEFAULT 'active',
       token VARCHAR(128),
+      avatar_path VARCHAR(255),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
+  // resumes 表：简历表，存放技能标签、经历与附件
   await pool.query(`
     CREATE TABLE IF NOT EXISTS resumes (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -42,6 +49,7 @@ async function init() {
       KEY idx_resume_user (user_id)
     )`);
 
+  // jobs 表：职位表，企业发布职位
   await pool.query(`
     CREATE TABLE IF NOT EXISTS jobs (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -59,6 +67,7 @@ async function init() {
       KEY idx_job_status (status)
     )`);
 
+  // applications 表：投递表，记录投递与匹配分
   await pool.query(`
     CREATE TABLE IF NOT EXISTS applications (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -76,6 +85,7 @@ async function init() {
       KEY idx_app_job (job_id)
     )`);
 
+  // contact_requests 表：联系方式交换请求
   await pool.query(`
     CREATE TABLE IF NOT EXISTS contact_requests (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -86,6 +96,7 @@ async function init() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
+  // notifications 表：系统通知，如投递动态、面试邀约、审核结果
   await pool.query(`
     CREATE TABLE IF NOT EXISTS notifications (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -95,18 +106,35 @@ async function init() {
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
-  await seed();
+  // 兼容旧库：若 users 表缺少头像字段，则补充
+  await ensureColumn('users', 'avatar_path', "ADD COLUMN avatar_path VARCHAR(255)");
+
+  await seed(); // 写入演示数据
 }
 
+// ensureColumn：检查列是否存在，不存在则执行 ALTER 语句（用于增量升级旧表）
+async function ensureColumn(table, column, ddl) {
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (!rows[0].c) await pool.query(`ALTER TABLE ${table} ${ddl}`);
+}
+
+// hashPassword：使用 scrypt 加盐哈希密码，避免明文存储
 function hashPassword(pwd) {
   return crypto.scryptSync(pwd, 'add-work-salt', 32).toString('hex');
 }
 
+// newToken：生成随机登录令牌，用于登录态校验
 function newToken() {
   return crypto.randomBytes(24).toString('hex');
 }
+// seed：写入管理员、演示企业、演示求职者、演示职位与简历
 async function seed() {
-  const [admins] = await pool.query("SELECT id FROM users WHERE username = ?", ['admin']);
+  // 管理员账号：admin / root123456
+  const [admins] = await pool.query('SELECT id FROM users WHERE username = ?', ['admin']);
   if (!admins.length) {
     await pool.query(
       "INSERT INTO users (username, password, role, name, status) VALUES (?, ?, 'admin', ?, 'active')",
@@ -114,6 +142,7 @@ async function seed() {
     );
   }
 
+  // 演示企业：techco / 123456
   const [companies] = await pool.query("SELECT COUNT(*) AS c FROM users WHERE role = 'company'");
   if (!companies[0].c) {
     await pool.query(
@@ -123,6 +152,7 @@ async function seed() {
     );
   }
 
+  // 演示求职者：lilei / 123456
   const [seekers] = await pool.query("SELECT COUNT(*) AS c FROM users WHERE role = 'seeker'");
   if (!seekers[0].c) {
     await pool.query(
@@ -132,6 +162,7 @@ async function seed() {
     );
   }
 
+  // 演示职位：前端开发工程师（上海）、后端开发工程师（北京）
   const [jobs] = await pool.query('SELECT COUNT(*) AS c FROM jobs');
   if (!jobs[0].c) {
     const [tc] = await pool.query("SELECT id FROM users WHERE username = 'techco'");
@@ -148,6 +179,7 @@ async function seed() {
     );
   }
 
+  // 演示简历：李雷的前端简历
   const [resume] = await pool.query('SELECT COUNT(*) AS c FROM resumes');
   if (!resume[0].c) {
     const [li] = await pool.query("SELECT id FROM users WHERE username = 'lilei'");
@@ -159,4 +191,5 @@ async function seed() {
   }
 }
 
+// 导出连接池与工具函数，供 server.js 使用
 module.exports = { pool, init, hashPassword, newToken };

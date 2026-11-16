@@ -1,81 +1,112 @@
+// user：当前登录用户对象
 let user = null;
+// token：登录令牌，持久化在 localStorage
 let token = localStorage.getItem('token') || null;
 
+// api：统一的后端请求封装，自动携带登录令牌
 async function api(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (token) headers['Authorization'] = 'Bearer ' + token;
-  const res = await fetch(path, { ...options, headers });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.ok) throw new Error(data.message || '请求失败');
-  return data.data;
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) }; // 组装请求头
+  if (token) headers['Authorization'] = 'Bearer ' + token; // 携带令牌
+  const res = await fetch(path, { ...options, headers }); // 发起请求
+  const data = await res.json().catch(() => ({})); // 解析响应
+  if (!res.ok || !data.ok) throw new Error(data.message || '请求失败'); // 错误时抛出
+  return data.data; // 返回数据
 }
 
+// showMsg：在认证区域显示提示信息
 function showMsg(text, isErr) {
-  const el = document.getElementById('authMsg');
+  const el = document.getElementById('authMsg'); // 取提示容器
   if (!el) return;
-  el.innerHTML = text ? `<div class="msg ${isErr ? 'err' : ''}">${text}</div>` : '';
+  el.innerHTML = text ? `<div class="msg ${isErr ? 'err' : ''}">${text}</div>` : ''; // 渲染提示
 }
 
+// esc：转义 HTML 特殊字符，防止注入
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// login：登录处理，成功后进入工作台
 async function login(e) {
-  e.preventDefault();
+  e.preventDefault(); // 阻止表单默认提交
   try {
     const d = await api('/api/login', {
       method: 'POST',
-      body: JSON.stringify({ username: loginUser.value, password: loginPwd.value })
+      body: JSON.stringify({ username: loginUser.value, password: loginPwd.value }) // 组装登录参数
     });
-    token = d.token; user = d.user;
-    localStorage.setItem('token', token);
-    enterDashboard();
-  } catch (err) { showMsg(err.message, true); }
+    token = d.token; user = d.user; // 保存令牌与用户
+    localStorage.setItem('token', token); // 持久化令牌
+    enterDashboard(); // 进入工作台
+  } catch (err) { showMsg(err.message, true); } // 错误提示
 }
 
+// register：注册处理，校验密码后提交注册
 async function register(e) {
-  e.preventDefault();
-  const role = regRole.value;
+  e.preventDefault(); // 阻止表单默认提交
+  const role = regRole.value; // 获取注册角色
+  // 密码长度校验：4~8 位
+  if (regPwd.value.length < 4 || regPwd.value.length > 8) {
+    showMsg('密码需为 4~8 位', true);
+    return;
+  }
+  // 两次密码确认校验
+  if (regPwd.value !== regPwd2.value) {
+    showMsg('两次输入的密码不一致', true);
+    return;
+  }
   try {
+    // 读取头像文件并转为 base64（可选）
+    let avatarBase64 = null, avatarName = null;
+    const avatarFile = document.getElementById('regAvatar').files[0]; // 获取头像文件
+    if (avatarFile) {
+      avatarName = avatarFile.name; // 记录文件名
+      avatarBase64 = await readFileAsBase64(avatarFile); // 转 base64
+    }
     const d = await api('/api/register', {
       method: 'POST',
       body: JSON.stringify({
         username: regUser.value, password: regPwd.value, role,
         name: regName.value,
-        companyName: role === 'company' ? regCompany.value : null,
-        phone: regPhone.value
+        companyName: role === 'company' ? regCompany.value : null, // 企业角色传企业名
+        phone: regPhone.value,
+        avatarName, avatarBase64 // 传递头像
       })
     });
-    showMsg(d.message + '，请登录', false);
-    setTimeout(() => switchAuth('login'), 1200);
-  } catch (err) { showMsg(err.message, true); }
+    showMsg(d.message + '，请登录', false); // 显示注册结果
+    setTimeout(() => switchAuth('login'), 1200); // 切换回登录页
+  } catch (err) { showMsg(err.message, true); } // 错误提示
 }
 
+// logout：退出登录，清除令牌并回到登录页
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
-  token = null; user = null;
-  localStorage.removeItem('token');
-  document.getElementById('authWrap').style.display = 'block';
-  document.getElementById('dashWrap').style.display = 'none';
-  document.getElementById('userBox').style.display = 'none';
+  token = null; user = null; // 清空登录状态
+  localStorage.removeItem('token'); // 移除持久化令牌
+  document.getElementById('authWrap').style.display = 'block'; // 显示登录区
+  document.getElementById('dashWrap').style.display = 'none'; // 隐藏工作台
+  document.getElementById('userBox').style.display = 'none'; // 隐藏用户信息
 }
 
+// switchAuth：切换登录/注册页签
 function switchAuth(mode) {
-  document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
-  document.getElementById('tabReg').classList.toggle('active', mode === 'register');
-  document.getElementById('loginForm').style.display = mode === 'login' ? 'block' : 'none';
-  document.getElementById('regForm').style.display = mode === 'register' ? 'block' : 'none';
+  document.getElementById('tabLogin').classList.toggle('active', mode === 'login'); // 切换登录页签高亮
+  document.getElementById('tabReg').classList.toggle('active', mode === 'register'); // 切换注册页签高亮
+  document.getElementById('loginForm').style.display = mode === 'login' ? 'block' : 'none'; // 显示对应表单
+  document.getElementById('regForm').style.display = mode === 'register' ? 'block' : 'none'; // 显示对应表单
 }
 
 function enterDashboard() {
-  document.getElementById('authWrap').style.display = 'none';
-  document.getElementById('dashWrap').style.display = 'block';
-  document.getElementById('userBox').style.display = 'flex';
+  document.getElementById('authWrap').style.display = 'none'; // 隐藏登录区
+  document.getElementById('dashWrap').style.display = 'block'; // 显示工作台
+  document.getElementById('userBox').style.display = 'flex'; // 显示用户信息
+  // 若有头像则展示，否则隐藏
+  const avatar = document.getElementById('userAvatar');
+  avatar.style.display = user.avatar_path ? 'block' : 'none';
+  avatar.src = user.avatar_path ? '/uploads/' + user.avatar_path : '';
   document.getElementById('userLabel').textContent =
-    `${user.name}（${{ seeker: '求职者', company: '企业', admin: '管理员' }[user.role]}）`;
-  renderTabs();
-  openTab('home');
+    `${user.name}（${{ seeker: '求职者', company: '企业', admin: '管理员' }[user.role]}）`; // 显示用户信息
+  renderTabs(); // 渲染页签
+  openTab('home'); // 打开首页
 }
 
 const ROLE_TABS = {
