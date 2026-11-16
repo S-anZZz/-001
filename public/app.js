@@ -24,6 +24,11 @@ function fileLink(name, path) {
   return `<a class="file" href="/uploads/${encodeURIComponent(path)}" target="_blank" rel="noopener">📎 ${label}</a>`;
 }
 
+// jobTypeLabel：职位类型文案
+function jobTypeLabel(t) {
+  return { fulltime: '全职', parttime: '兼职', intern: '实习', remote: '远程' }[t] || '全职';
+}
+
 // timeFmt：把后端返回的 ISO 时间转成本地可读格式（避免直接显示 UTC 的 T 格式）
 function timeFmt(v) {
   if (!v) return ''; // 空值直接返回
@@ -261,6 +266,28 @@ PANELS.home = async (p) => {
       </div>`;
     return;
   }
+  if (user.role === 'company') { // 企业首页展示招聘漏斗
+    const d = await api('/api/company/dashboard');
+    p.innerHTML = `
+      <div class="card">
+        <div class="card-head">招聘看板</div>
+        <div class="card-body">
+          <div class="stat-grid">
+            <div class="stat-card">职位总数<b>${d.jobs.total || 0}</b></div>
+            <div class="stat-card">在招职位<b>${d.jobs.published || 0}</b></div>
+            <div class="stat-card">职位曝光<b>${d.jobs.views || 0}</b></div>
+            <div class="stat-card">收到投递<b>${d.apps.total || 0}</b></div>
+            <div class="stat-card">待面试<b>${d.interviews.pending || 0}</b></div>
+            <div class="stat-card">已录用<b>${d.apps.accepted || 0}</b></div>
+            <div class="stat-card">浏览→投递<b>${d.conversion.viewToApply}%</b></div>
+            <div class="stat-card">投递→面试<b>${d.conversion.applyToInterview}%</b></div>
+            <div class="stat-card">面试→录用<b>${d.conversion.interviewToHire}%</b></div>
+          </div>
+          <p class="match" style="margin-top:12px">提示：职位发布与修改无需审核；使用“刷新/置顶/急招”可以提升曝光。</p>
+        </div>
+      </div>`;
+    return;
+  }
   p.innerHTML = `
     <div class="card">
       <div class="card-head">工作台</div>
@@ -299,6 +326,7 @@ PANELS.resume = async (p) => {
               <td>${timeFmt(r.updated_at)}</td>
               <td>
                 <button class="tiny" onclick="openResumeForm(${r.id})">编辑</button>
+                <button class="tiny ghost" onclick="previewResume(${r.id})">预览</button>
                 ${r.is_default ? '' : `<button class="tiny ghost" onclick="setDefaultResume(${r.id})">设为主简历</button>`}
                 <button class="tiny ghost" onclick="showResumeHistory(${r.id})">历史</button>
                 <button class="tiny ghost" onclick="deleteResume(${r.id})">删除</button>
@@ -532,7 +560,7 @@ async function searchJobs(page) {
               <div class="match">${timeFmt(j.created_at)} · 浏览 ${j.view_count || 0}</div></td>
           <td>${esc(j.company || j.company_name)}</td>
           <td>${esc(j.location)}</td>
-          <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+          <td>${j.salary_min || 0}-${j.salary_max || '不限'}<div class="match">${jobTypeLabel(j.job_type)}</div></td>
           <td>${esc(j.education)}</td>
           <td>${esc(j.experience)}</td>
           <td class="match">${esc(j.requirements)}</td>
@@ -723,6 +751,36 @@ async function askInterview(id) {
     alert('面试邀约已发送，等待候选人确认');
     await openTab('apps');
   } catch (err) { alert(err.message); }
+}
+
+// toggleFollow：关注/取消关注企业
+async function toggleFollow(companyId) {
+  try {
+    const d = await api(`/api/follows/${companyId}`, { method: 'POST' });
+    alert(d.followed ? '已关注该企业，有新职位会优先展示' : '已取消关注');
+  } catch (err) { alert(err.message); }
+}
+
+// previewResume：新窗口打开可打印的简历预览（也可直接另存为 PDF）
+async function previewResume(id) {
+  const list = await api('/api/resumes');
+  const r = list.find((x) => x.id === id);
+  if (!r) return;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.name)}的简历</title>
+    <style>body{font-family:-apple-system,'PingFang SC',sans-serif;padding:32px;line-height:1.8;color:#111}
+    h1{font-size:22px;margin:0 0 6px}h2{font-size:15px;margin:18px 0 6px;border-bottom:1px solid #000;padding-bottom:4px}
+    .muted{color:#666;font-size:13px}</style></head><body>
+    <h1>${esc(r.name)}</h1>
+    <div class="muted">${esc(r.education || '')} · ${esc(r.expected_city || '')} · 期望 ${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'} · ${esc(jobStatusLabel(r.job_status))}</div>
+    <h2>技能标签</h2><div>${esc(r.skills || '-')}</div>
+    <h2>工作经历</h2><div>${esc(r.experience || '-')}</div>
+    <h2>项目经历</h2><div>${esc(r.project_exp || '-')}</div>
+    <h2>教育经历</h2><div>${esc(r.edu_exp || '-')}</div>
+    <h2>自我评价</h2><div>${esc(r.self_eval || '-')}</div>
+    </body></html>`;
+  const w = window.open('', '_blank'); // 打开新窗口
+  w.document.write(html); // 写入简历 HTML
+  w.document.close(); // 关闭写入流
 }
 
 // toggleFavorite：收藏/取消收藏职位
@@ -931,6 +989,7 @@ async function openJobDetail(id) {
              <b>地点：</b>${esc(d.location || '-')}　<b>学历：</b>${esc(d.education || '不限')}　
              <b>经验：</b>${esc(d.experience || '不限')}</p>
           <p><b>职位要求：</b>${esc(d.requirements || '未填写')}</p>
+          ${d.benefits ? `<p><b>福利：</b>${esc(d.benefits)}</p>` : ''}
           <p><b>企业：</b>${esc(d.company || '-')} ${d.verified ? '<span class="badge">已认证</span>' : ''}
              ${d.company_size ? '　规模：' + esc(d.company_size) : ''}</p>
           ${d.company_intro ? `<p class="match">${esc(d.company_intro)}</p>` : ''}
@@ -939,6 +998,7 @@ async function openJobDetail(id) {
         <div class="chat-foot">
           <button onclick="applyJob(${d.id}, this)">投递该职位</button>
           <button class="tiny ghost" onclick="toggleFavorite(${d.id})">收藏</button>
+          <button class="tiny ghost" onclick="toggleFollow(${d.company_id})">关注企业</button>
         </div>
       </div>`;
     document.body.appendChild(mask); // 挂载弹窗
@@ -1053,6 +1113,11 @@ async function sendChat() {
 
 PANELS.contact = async (p) => {
   const d = await api('/api/contact/requests');
+  const threads = await api('/api/messages/threads').catch(() => []); // 会话未读数
+  const unreadOf = (uid) => {
+    const t = threads.find((x) => x.peer_id === uid); // 找到对应会话
+    return t && t.unread ? ` <span class="badge">${t.unread} 未读</span>` : ''; // 显示未读角标
+  };
   const rows = [];
   if (d.received.length) {
     rows.push('<tr><th>来自</th><th>角色</th><th>企业</th><th>操作</th></tr>');
@@ -1062,7 +1127,7 @@ PANELS.contact = async (p) => {
       <td>
         <button class="tiny" onclick="respondContact(${r.id}, true, this)">同意</button>
         <button class="tiny ghost" onclick="respondContact(${r.id}, false, this)">拒绝</button>
-        <button class="tiny ghost" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}')">聊天</button>
+        <button class="tiny ghost" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}')">聊天${unreadOf(r.from_user_id)}</button>
         ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
       </td></tr>`).join(''));
   }
@@ -1070,7 +1135,7 @@ PANELS.contact = async (p) => {
     <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
     <td>${esc(r.company_name || '-')}</td>
     <td><span class="badge">${r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝'}</span>
-      <button class="tiny ghost" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}')">聊天</button>
+      <button class="tiny ghost" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}')">聊天${unreadOf(r.to_user_id)}</button>
       ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
     </td></tr>`).join('');
   p.innerHTML = `
@@ -1154,6 +1219,18 @@ async function companyJobs(p) {
                   <select id="jExp"><option value="">不限</option><option>应届生</option><option>1-3年</option><option>3-5年</option><option>5-10年</option></select>
                 </div>
               </div>
+              <div class="row">
+                <div><label>职位类型</label>
+                  <select id="jType">
+                    <option value="fulltime">全职</option><option value="parttime">兼职</option>
+                    <option value="intern">实习</option><option value="remote">远程</option>
+                  </select>
+                </div>
+                <div><label>福利标签</label><input type="text" id="jBenefits" placeholder="如：五险一金,双休,弹性工作"></div>
+              </div>
+              <label>技能快选（点击追加到职位要求）</label>
+              <div class="chips" id="skillChips"></div>
+              <p><button type="button" class="tiny ghost" onclick="fillJobTemplate()">套用职位模板</button></p>
               <p><button type="submit" id="jobSubmit">发布职位</button></p>
             </form>
           </div>
@@ -1164,9 +1241,37 @@ async function companyJobs(p) {
   renderJobsTable(jobs);
 };
 
+// 常用技能库：点击即可追加到职位要求，帮助结构化 JD
+const SKILL_LIB = ['JavaScript', 'TypeScript', 'React', 'Vue', 'Node.js', 'Java', 'Python', 'MySQL',
+  'Redis', 'Spring', 'Docker', '微服务', '数据分析'];
+
+// renderSkillChips：渲染技能快捷标签
+function renderSkillChips() {
+  const box = document.getElementById('skillChips');
+  if (!box) return;
+  box.innerHTML = SKILL_LIB.map((s) => `<button type="button" class="chip" onclick="addSkill('${s}')">${s}</button>`).join('');
+}
+
+// addSkill：把技能追加到职位要求
+function addSkill(skill) {
+  const input = document.getElementById('jReq');
+  const cur = input.value.trim();
+  if (cur.includes(skill)) return; // 已存在不重复
+  input.value = cur ? cur + ',' + skill : skill; // 逗号分隔追加
+}
+
+// fillJobTemplate：套用职位模板
+function fillJobTemplate() {
+  document.getElementById('jTitle').value = document.getElementById('jTitle').value || '前端开发工程师';
+  document.getElementById('jReq').value = 'JavaScript,React,Vue,前端工程化';
+  document.getElementById('jBenefits').value = '五险一金,双休,弹性工作,年度体检';
+  document.getElementById('jType').value = 'fulltime';
+}
+
 function toggleJobForm() {
-  document.getElementById('jobForm').style.display =
-    document.getElementById('jobForm').style.display === 'none' ? 'block' : 'none';
+  const box = document.getElementById('jobForm');
+  box.style.display = box.style.display === 'none' ? 'block' : 'none';
+  renderSkillChips(); // 展开表单时渲染技能标签
 }
 
 let editingJobId = null;
@@ -1180,7 +1285,9 @@ async function saveJob(e) {
     salaryMin: document.getElementById('jSalMin').value,
     salaryMax: document.getElementById('jSalMax').value,
     education: document.getElementById('jEdu').value,
-    experience: document.getElementById('jExp').value
+    experience: document.getElementById('jExp').value,
+    jobType: document.getElementById('jType') ? document.getElementById('jType').value : 'fulltime',
+    benefits: document.getElementById('jBenefits') ? document.getElementById('jBenefits').value : ''
   };
   try {
     if (editingJobId) {
@@ -1207,6 +1314,8 @@ function editJob(id) {
       document.getElementById('jSalMax').value = job.salary_max || '';
       document.getElementById('jEdu').value = job.education || '';
       document.getElementById('jExp').value = job.experience || '';
+      if (document.getElementById('jType')) document.getElementById('jType').value = job.job_type || 'fulltime';
+      if (document.getElementById('jBenefits')) document.getElementById('jBenefits').value = job.benefits || '';
       document.getElementById('jobSubmit').textContent = '保存修改';
       toggleJobForm();
     });
@@ -1324,7 +1433,7 @@ PANELS.companies = async (p) => {
               <td><span class="badge">${c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : '已停用'}</span></td>
               <td>${c.status === 'pending'
                 ? `<button class="tiny" onclick="approveCompany(${c.id})">通过</button>
-                   <button class="tiny ghost" onclick="toggleUserStatus(${c.id},'banned')">拒绝</button>`
+                   <button class="tiny ghost" onclick="rejectCompany(${c.id})">驳回</button>`
                 : `<button class="tiny ghost" onclick="toggleUserStatus(${c.id},'active')">启用</button>
                    <button class="tiny ghost" onclick="toggleUserStatus(${c.id},'banned')">停用</button>`}</td>
             </tr>`).join('')}
@@ -1332,6 +1441,16 @@ PANELS.companies = async (p) => {
       </div>
     </div>`;
 };
+
+// rejectCompany：驳回企业注册并要求填写理由
+async function rejectCompany(id) {
+  const reason = prompt('请填写驳回理由（会通知企业）');
+  if (!reason) return;
+  try {
+    await api(`/api/admin/companies/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+    await openTab('companies');
+  } catch (err) { alert(err.message); }
+}
 
 async function approveCompany(id) {
   try {

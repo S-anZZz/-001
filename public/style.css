@@ -205,3 +205,8 @@ a.file:hover { background: var(--head); color: var(--head-ink); }
 
 /* ---------- 聊天快捷回复 ---------- */
 .chat-quick { display: flex; gap: 6px; padding: 8px 14px 0; flex-wrap: wrap; }
+
+/* ---------- 技能标签 ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip { padding: 3px 10px; border: 1px solid var(--line); background: #fff; font-size: 12px; cursor: pointer; }
+.chip:hover { background: var(--head); color: var(--head-ink); }

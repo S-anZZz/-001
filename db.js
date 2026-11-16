@@ -60,6 +60,7 @@ async function init() {
       company_industry VARCHAR(32),
       company_size VARCHAR(32),
       company_address VARCHAR(64),
+      reject_reason VARCHAR(255),
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`);
 
@@ -103,6 +104,8 @@ async function init() {
       education VARCHAR(32),
       experience VARCHAR(32),
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      job_type VARCHAR(16) NOT NULL DEFAULT 'fulltime',
+      benefits VARCHAR(255),
       is_urgent TINYINT NOT NULL DEFAULT 0,
       is_top TINYINT NOT NULL DEFAULT 0,
       view_count INT NOT NULL DEFAULT 0,
@@ -138,6 +141,8 @@ async function init() {
       to_user_id INT NOT NULL,
       job_id INT,
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      job_type VARCHAR(16) NOT NULL DEFAULT 'fulltime',
+      benefits VARCHAR(255),
       is_urgent TINYINT NOT NULL DEFAULT 0,
       is_top TINYINT NOT NULL DEFAULT 0,
       view_count INT NOT NULL DEFAULT 0,
@@ -239,6 +244,8 @@ async function init() {
       mode VARCHAR(16) NOT NULL DEFAULT 'online',
       link VARCHAR(255),
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      job_type VARCHAR(16) NOT NULL DEFAULT 'fulltime',
+      benefits VARCHAR(255),
       is_urgent TINYINT NOT NULL DEFAULT 0,
       is_top TINYINT NOT NULL DEFAULT 0,
       view_count INT NOT NULL DEFAULT 0,
@@ -333,8 +340,11 @@ async function init() {
     ['company_industry', "ADD COLUMN company_industry VARCHAR(32)"],
     ['company_size', "ADD COLUMN company_size VARCHAR(32)"],
     ['company_address', "ADD COLUMN company_address VARCHAR(64)"],
+    ['reject_reason', "ADD COLUMN reject_reason VARCHAR(255)"],
   ]) await ensureColumn('users', col, ddl); // 用户表补齐
   for (const [col, ddl] of [
+    ['job_type', "ADD COLUMN job_type VARCHAR(16) NOT NULL DEFAULT 'fulltime'"],
+    ['benefits', "ADD COLUMN benefits VARCHAR(255)"],
     ['is_urgent', "ADD COLUMN is_urgent TINYINT NOT NULL DEFAULT 0"],
     ['is_top', "ADD COLUMN is_top TINYINT NOT NULL DEFAULT 0"],
     ['view_count', "ADD COLUMN view_count INT NOT NULL DEFAULT 0"],

@@ -388,13 +388,18 @@ app.get('/api/jobs/:id', wrap(async (req, res) => {
 }));
 
 app.post('/api/jobs', requireAuth(['company']), wrap(async (req, res) => {
-  const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析职位参数
+  const { title, requirements, location, salaryMin, salaryMax, education, experience,
+    jobType, benefits } = req.body || {}; // 解析职位参数
   if (!title) return send(res, false, '职位标题必填'); // 标题必填校验
+  const banned = hasBannedWord(title + ' ' + (requirements || '') + ' ' + (benefits || '')); // 敏感词检查
+  if (banned) return send(res, false, `内容包含违规词「${banned}」，请修改后再发布`); // 命中则拒绝
   if (salaryMin && salaryMax && Number(salaryMin) > Number(salaryMax)) return send(res, false, '最低薪资不能高于最高薪资'); // 薪资区间校验
   const [info] = await pool.query(
-    `INSERT INTO jobs (company_id, title, requirements, location, salary_min, salary_max, education, experience, status)
-     VALUES (?,?,?,?,?,?,?,?, 'published')`,
-    [req.user.id, title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '']
+    `INSERT INTO jobs (company_id, title, requirements, location, salary_min, salary_max, education, experience,
+       job_type, benefits, status)
+     VALUES (?,?,?,?,?,?,?,?,?,?, 'published')`,
+    [req.user.id, title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '',
+     ['fulltime', 'parttime', 'intern', 'remote'].includes(jobType) ? jobType : 'fulltime', String(benefits || '').slice(0, 255)]
   ); // 插入职位，状态直接为已发布
   send(res, true, { id: info.insertId, message: '职位已发布' }); // 返回提示
 }));
@@ -407,13 +412,18 @@ app.patch('/api/jobs/:id', requireAuth(['company']), wrap(async (req, res) => {
   // 下架职位同样允许编辑，修改后可一键重新上架
   await pool.query('INSERT INTO job_history (job_id, actor_id, snapshot) VALUES (?,?,?)',
     [job.id, req.user.id, JSON.stringify(job)]); // 保存修改前快照
-  const { title, requirements, location, salaryMin, salaryMax, education, experience } = req.body || {}; // 解析修改内容
+  const { title, requirements, location, salaryMin, salaryMax, education, experience,
+    jobType, benefits } = req.body || {}; // 解析修改内容
   if (!title) return send(res, false, '职位标题必填'); // 标题必填
+  const bannedEdit = hasBannedWord(title + ' ' + (requirements || '') + ' ' + (benefits || '')); // 敏感词检查
+  if (bannedEdit) return send(res, false, `内容包含违规词「${bannedEdit}」，请修改后再保存`); // 命中则拒绝
   if (salaryMin && salaryMax && Number(salaryMin) > Number(salaryMax)) return send(res, false, '最低薪资不能高于最高薪资'); // 薪资区间校验
   await pool.query(
-    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?
-     WHERE id=?`,
-    [title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '', req.params.id]
+    `UPDATE jobs SET title=?, requirements=?, location=?, salary_min=?, salary_max=?, education=?, experience=?,
+       job_type=?, benefits=? WHERE id=?`,
+    [title, requirements || '', location || '', salaryMin || null, salaryMax || null, education || '', experience || '',
+     ['fulltime', 'parttime', 'intern', 'remote'].includes(jobType) ? jobType : 'fulltime', String(benefits || '').slice(0, 255),
+     req.params.id]
   ); // 更新职位内容，状态保持不变（下架职位改完再上架）
   send(res, true, '职位已更新'); // 返回提示
 }));
@@ -604,12 +614,14 @@ app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
 }));
 
 // 站内聊天：发送消息
-app.post('/api/messages', requireAuth(), wrap(async (req, res) => {
+app.post('/api/messages', requireAuth(), limitBy('message', 30, 60 * 1000), wrap(async (req, res) => {
   const { toUserId, content, jobId } = req.body || {}; // 解析接收方、内容与关联职位
   const text = String(content || '').trim(); // 去掉首尾空白
   if (!toUserId) return send(res, false, '请选择接收方'); // 接收方必填
   if (!text) return send(res, false, '请输入消息内容'); // 内容必填
   if (text.length > 500) return send(res, false, '消息过长（最多 500 字）'); // 长度限制
+  const bannedMsg = hasBannedWord(text); // 敏感词检查
+  if (bannedMsg) return send(res, false, '消息包含违规内容，请修改后再发送'); // 命中则拒绝
   const [peer] = await pool.query('SELECT id, name FROM users WHERE id = ?', [toUserId]); // 查询接收方
   if (!peer.length) return send(res, false, '对方不存在'); // 校验接收方存在
   const [info] = await pool.query(
@@ -994,6 +1006,58 @@ app.patch('/api/company/profile', requireAuth(['company']), wrap(async (req, res
   send(res, true, '企业资料已更新'); // 返回结果
 }));
 
+
+
+// ===================== 企业招聘看板 =====================
+
+// GET /api/company/dashboard：企业自己的招聘漏斗
+app.get('/api/company/dashboard', requireAuth(['company']), wrap(async (req, res) => {
+  const [[jobs]] = await pool.query(
+    `SELECT COUNT(*) AS total, SUM(status='published') AS published,
+            COALESCE(SUM(view_count),0) AS views, COALESCE(SUM(is_urgent=1),0) AS urgent
+     FROM jobs WHERE company_id = ?`, [req.user.id]
+  ); // 职位与曝光
+  const [[apps]] = await pool.query(
+    `SELECT COUNT(*) AS total,
+            SUM(status='viewed') AS viewed,
+            SUM(status='interview') AS interview,
+            SUM(status='accepted') AS accepted,
+            SUM(status='rejected') AS rejected
+     FROM applications WHERE company_id = ?`, [req.user.id]
+  ); // 投递漏斗
+  const [[itv]] = await pool.query(
+    'SELECT COUNT(*) AS total, COALESCE(SUM(status=\'pending\'),0) AS pending FROM interviews WHERE company_id = ?', [req.user.id]
+  ); // 面试状态
+  const total = apps.total || 0; // 投递总数
+  send(res, true, {
+    jobs, apps, interviews: itv,
+    conversion: {
+      viewToApply: jobs.views > 0 ? Math.min(100, Math.round((total / jobs.views) * 100)) : 0, // 浏览→投递（历史数据可能没有浏览量，封顶 100）
+      applyToInterview: total > 0 ? Math.min(100, Math.round(((apps.interview || 0) + (apps.accepted || 0)) / total * 100)) : 0, // 投递→面试
+      interviewToHire: (apps.interview || 0) + (apps.accepted || 0) > 0
+        ? Math.round((apps.accepted || 0) / ((apps.interview || 0) + (apps.accepted || 0)) * 100) : 0 // 面试→录用
+    }
+  }); // 返回看板数据
+}));
+
+// POST /api/admin/companies/:id/reject：驳回企业注册并说明原因
+app.post('/api/admin/companies/:id/reject', requireAuth(['admin']), wrap(async (req, res) => {
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 200); // 驳回理由
+  if (!reason) return send(res, false, '请填写驳回理由'); // 理由必填
+  const [rows] = await pool.query("SELECT id FROM users WHERE id = ? AND role = 'company'", [req.params.id]); // 校验企业
+  if (!rows.length) return send(res, false, '企业不存在');
+  await pool.query("UPDATE users SET status='banned', reject_reason=? WHERE id=?", [reason, req.params.id]); // 置为驳回并记录理由
+  await pool.query('DELETE FROM sessions WHERE user_id = ?', [req.params.id]); // 吊销会话
+  await notify(req.params.id, 'approve', `企业注册未通过审核，原因：${reason}。请修改后联系管理员重新提交。`); // 通知企业
+  send(res, true, '已驳回并通知企业'); // 返回结果
+}));
+
+// GET /api/company/reject-reason：企业查看自己被驳回的原因
+app.get('/api/company/reject-reason', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT status, reject_reason FROM users WHERE id = ?', [req.user.id]); // 查询自身状态
+  send(res, true, rows[0] || {}); // 返回状态与理由
+}));
+
 // GET /api/company/:id：企业主页（求职者可见的公开信息）
 app.get('/api/company/:id', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query(
@@ -1156,6 +1220,45 @@ app.get('/api/admin/export', requireAuth(['admin']), wrap(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="addwork-${type}.csv"`);
   res.send(csv); // 输出 CSV
+}));
+
+// ===================== 内容审核 / 限频 / 健康检查 =====================
+
+// 敏感词表：职位、简历、消息等自由文本提交前做一次基础过滤
+const BANNED_WORDS = ['代开发票', '刷单', '赌博', '色情', '办证', '包过', '传销'];
+
+// hasBannedWord：命中敏感词返回该词，否则返回 null
+function hasBannedWord(text) {
+  const s = String(text || ''); // 统一转字符串
+  return BANNED_WORDS.find((w) => s.includes(w)) || null; // 返回命中的词
+}
+
+// 简单内存限频：同一 key 在窗口期内最多 N 次
+const rateBuckets = new Map();
+function rateLimit(key, max, windowMs) {
+  const now = Date.now();
+  const rec = rateBuckets.get(key);
+  if (!rec || now - rec.start > windowMs) { // 窗口过期则重置
+    rateBuckets.set(key, { start: now, count: 1 });
+    return true;
+  }
+  rec.count += 1; // 累计次数
+  return rec.count <= max; // 超限返回 false
+}
+
+// 限频中间件工厂
+function limitBy(scope, max, windowMs) {
+  return (req, res, next) => {
+    const id = (req.ip || '') + ':' + scope; // 以 IP + 场景为键
+    if (!rateLimit(id, max, windowMs)) return send(res, false, '操作过于频繁，请稍后再试', 429); // 超限拒绝
+    next();
+  };
+}
+
+// GET /healthz：健康检查（供平台探活与监控）
+app.get('/healthz', wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT 1 AS ok'); // 探活数据库
+  res.json({ ok: true, db: rows[0].ok === 1, uptime: Math.round(process.uptime()) }); // 返回运行状态
 }));
 
 // 服务启动：先初始化数据库与种子数据，再监听端口
