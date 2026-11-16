@@ -48,7 +48,8 @@ app.get('/uploads/:file', requireAuth(), wrap(async (req, res) => {
   if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
   const ext = path.extname(file).toLowerCase(); // 取扩展名
   res.type(ext || 'bin'); // 按扩展名设置 Content-Type
-  res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file)}`); // 支持中文文件名
+  const asciiName = file.replace(/[^\x20-\x7E]/g, '_'); // 生成纯 ASCII 文件名，兼容不认 filename* 的浏览器
+  res.setHeader('Content-Disposition', `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(file)}`); // 同时给出两种写法
   res.setHeader('Cache-Control', 'private, max-age=600'); // 个人资料不进入共享缓存
   res.send(buffer); // 输出文件二进制内容
 }));
