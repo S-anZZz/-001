@@ -63,12 +63,24 @@ async function init() {
     CREATE TABLE IF NOT EXISTS resumes (
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
+      title VARCHAR(64),
       name VARCHAR(64),
       skills TEXT,
       experience TEXT,
       education VARCHAR(32),
+      expected_salary_min INT,
+      expected_salary_max INT,
+      expected_city VARCHAR(64),
+      available_time VARCHAR(32),
+      job_status VARCHAR(16) NOT NULL DEFAULT 'open',
+      self_eval TEXT,
+      project_exp TEXT,
+      edu_exp TEXT,
+      visibility VARCHAR(16) NOT NULL DEFAULT 'public',
+      is_default TINYINT NOT NULL DEFAULT 0,
       attachment_name VARCHAR(255),
       attachment_path VARCHAR(255),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_resume_user (user_id)
     )`);
@@ -132,6 +144,68 @@ async function init() {
       KEY idx_session_user (user_id)
     )`);
 
+  // resume_history 表：简历修改历史（保存修改前的快照）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS resume_history (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      resume_id INT NOT NULL,
+      user_id INT NOT NULL,
+      snapshot TEXT,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_history_resume (resume_id)
+    )`);
+
+  // favorites 表：收藏职位
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS favorites (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      job_id INT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_fav_user_job (user_id, job_id)
+    )`);
+
+  // follows 表：关注企业
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS follows (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      company_id INT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uk_follow_user_company (user_id, company_id)
+    )`);
+
+  // interviews 表：面试邀约与求职者的确认/改约/拒绝
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS interviews (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      application_id INT NOT NULL,
+      job_id INT,
+      seeker_id INT NOT NULL,
+      company_id INT NOT NULL,
+      scheduled_at DATETIME,
+      mode VARCHAR(16) NOT NULL DEFAULT 'online',
+      link VARCHAR(255),
+      status VARCHAR(16) NOT NULL DEFAULT 'pending',
+      seeker_note VARCHAR(255),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_interview_seeker (seeker_id),
+      KEY idx_interview_company (company_id)
+    )`);
+
+  // app_events 表：投递轨迹（何时被查看、被下载、状态变更）
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_events (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      application_id INT NOT NULL,
+      actor_id INT,
+      action VARCHAR(32) NOT NULL,
+      detail VARCHAR(255),
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      KEY idx_event_app (application_id)
+    )`);
+
   // messages 表：站内聊天消息，企业与求职者就联系方式、面试细节沟通
   await pool.query(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -171,6 +245,31 @@ async function init() {
   await ensureColumn('users', 'avatar_path', "ADD COLUMN avatar_path VARCHAR(255)");
   // 兼容旧库：若 users 表缺少经营许可证字段，则补充
   await ensureColumn('users', 'license_path', "ADD COLUMN license_path VARCHAR(255)");
+  // 兼容旧库：简历新增的结构化字段
+  for (const [col, ddl] of [
+    ['title', "ADD COLUMN title VARCHAR(64)"],
+    ['expected_salary_min', "ADD COLUMN expected_salary_min INT"],
+    ['expected_salary_max', "ADD COLUMN expected_salary_max INT"],
+    ['expected_city', "ADD COLUMN expected_city VARCHAR(64)"],
+    ['available_time', "ADD COLUMN available_time VARCHAR(32)"],
+    ['job_status', "ADD COLUMN job_status VARCHAR(16) NOT NULL DEFAULT 'open'"],
+    ['self_eval', "ADD COLUMN self_eval TEXT"],
+    ['project_exp', "ADD COLUMN project_exp TEXT"],
+    ['edu_exp', "ADD COLUMN edu_exp TEXT"],
+    ['visibility', "ADD COLUMN visibility VARCHAR(16) NOT NULL DEFAULT 'public'"],
+    ['is_default', "ADD COLUMN is_default TINYINT NOT NULL DEFAULT 0"],
+    ['created_at', "ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"],
+  ]) await ensureColumn('resumes', col, ddl); // 逐列补齐
+
+  // 兼容旧库：历史数据补一份默认简历标记（每人最新一份设为主简历）
+  await pool.query(`
+    UPDATE resumes r
+    JOIN (SELECT user_id, MAX(id) AS id FROM resumes GROUP BY user_id) t ON t.id = r.id
+    SET r.is_default = 1
+    WHERE r.is_default = 0
+      AND NOT EXISTS (SELECT 1 FROM (SELECT user_id FROM resumes WHERE is_default = 1) d WHERE d.user_id = r.user_id)
+  `);
+
   // 兼容旧库：令牌过期时间
   await ensureColumn('users', 'token_expires_at', "ADD COLUMN token_expires_at DATETIME");
   // 兼容旧库：通知已读标记

@@ -212,29 +212,149 @@ PANELS.home = async (p) => {
 };
 
 PANELS.resume = async (p) => {
-  const r = await api('/api/resume/mine');
+  const list = await api('/api/resumes'); // 拉取我的简历列表
   p.innerHTML = `
     <div class="card">
-      <div class="card-head">我的简历</div>
+      <div class="card-head">我的简历 <button class="tiny" onclick="openResumeForm()">新建简历</button></div>
       <div class="card-body">
         <div id="resumeMsg"></div>
-        <form class="form" onsubmit="saveResume(event)">
-          <div class="row">
-            <div><label>姓名</label><input type="text" id="rName" value="${esc(r && r.name)}" required></div>
-            <div><label>学历</label><input type="text" id="rEdu" value="${esc(r && r.education)}" placeholder="如：本科 / 硕士"></div>
-          </div>
-          <label>技能标签</label>
-          <input type="text" id="rSkills" value="${esc(r && r.skills)}" placeholder="用逗号分隔，如：JavaScript,React,Vue">
-          <label>工作经历</label>
-          <textarea id="rExp" placeholder="如：5年前端开发经验">${esc(r && r.experience)}</textarea>
-          <label>附件（PDF / Word）</label>
-          <input type="file" id="rFile" accept=".pdf,.doc,.docx">
-          ${r && r.attachment_name ? `<p class="match">已上传附件：${fileLink(r.attachment_name, r.attachment_path)}（重新选择文件将替换）</p>` : ''}
-          <p><button type="submit">保存简历</button></p>
-        </form>
+        ${list.length ? `
+        <table class="grid">
+          <tr><th>简历名称</th><th>姓名</th><th>期望岗位城市</th><th>期望薪资</th><th>开放度</th><th>更新时间</th><th>操作</th></tr>
+          ${list.map((r) => `
+            <tr>
+              <td><b>${esc(r.title || '我的简历')}</b>${r.is_default ? ' <span class="badge">主简历</span>' : ''}</td>
+              <td>${esc(r.name)}</td>
+              <td>${esc(r.expected_city || '-')}</td>
+              <td>${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
+              <td>${esc(visibilityLabel(r.visibility))}</td>
+              <td>${timeFmt(r.updated_at)}</td>
+              <td>
+                <button class="tiny" onclick="openResumeForm(${r.id})">编辑</button>
+                ${r.is_default ? '' : `<button class="tiny ghost" onclick="setDefaultResume(${r.id})">设为主简历</button>`}
+                <button class="tiny ghost" onclick="showResumeHistory(${r.id})">历史</button>
+                <button class="tiny ghost" onclick="deleteResume(${r.id})">删除</button>
+              </td>
+            </tr>`).join('')}
+        </table>` : '<div class="empty">还没有简历，点右上角“新建简历”创建第一份吧</div>'}
+        <div id="resumeEditor"></div>
       </div>
     </div>`;
 };
+
+// visibilityLabel：简历开放度的中文说明
+function visibilityLabel(v) {
+  return { public: '公开', hidden: '隐藏', targeted: '仅投递可见' }[v] || '公开';
+}
+
+// openResumeForm：打开新建/编辑表单
+async function openResumeForm(id) {
+  const box = document.getElementById('resumeEditor');
+  let r = null;
+  if (id) {
+    const list = await api('/api/resumes'); // 取列表后定位当前简历
+    r = list.find((x) => x.id === id) || null;
+  }
+  window.__editingResumeId = id || null; // 记录当前编辑的简历
+  box.innerHTML = `
+    <h4>${id ? '编辑简历' : '新建简历'}</h4>
+    <form class="form" onsubmit="saveResumeForm(event)">
+      <div class="row">
+        <div><label>简历名称</label><input type="text" id="rTitle" value="${esc(r && r.title)}" placeholder="如：前端开发简历"></div>
+        <div><label>姓名</label><input type="text" id="rName" value="${esc(r && r.name)}" required></div>
+      </div>
+      <div class="row">
+        <div><label>学历</label><input type="text" id="rEdu" value="${esc(r && r.education)}" placeholder="如：本科"></div>
+        <div><label>求职状态</label>
+          <select id="rJobStatus">
+            <option value="open" ${r && r.job_status === 'open' ? 'selected' : ''}>在职-考虑机会</option>
+            <option value="looking" ${r && r.job_status === 'looking' ? 'selected' : ''}>离职-随时到岗</option>
+            <option value="closed" ${r && r.job_status === 'closed' ? 'selected' : ''}>暂不考虑</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label>期望城市</label><input type="text" id="rCity" value="${esc(r && r.expected_city)}" placeholder="如：郑州"></div>
+        <div><label>到岗时间</label><input type="text" id="rAvailable" value="${esc(r && r.available_time)}" placeholder="如：一周内 / 一个月内"></div>
+      </div>
+      <div class="row">
+        <div><label>期望薪资下限（元）</label><input type="number" id="rSalMin" min="0" value="${r && r.expected_salary_min ? r.expected_salary_min : ''}"></div>
+        <div><label>期望薪资上限（元）</label><input type="number" id="rSalMax" min="0" value="${r && r.expected_salary_max ? r.expected_salary_max : ''}"></div>
+      </div>
+      <div class="row">
+        <div><label>简历开放度</label>
+          <select id="rVisibility">
+            <option value="public" ${r && r.visibility === 'public' ? 'selected' : ''}>公开（企业可搜索到）</option>
+            <option value="targeted" ${r && r.visibility === 'targeted' ? 'selected' : ''}>仅投递可见</option>
+            <option value="hidden" ${r && r.visibility === 'hidden' ? 'selected' : ''}>隐藏</option>
+          </select>
+        </div>
+        <div><label>附件（PDF / Word）</label><input type="file" id="rFile" accept=".pdf,.doc,.docx"></div>
+      </div>
+      <label>技能标签</label>
+      <input type="text" id="rSkills" value="${esc(r && r.skills)}" placeholder="逗号分隔，如：JavaScript,React,Vue">
+      <label>工作经历</label>
+      <textarea id="rExp" placeholder="如：2021.07-2024.06 某某公司 前端开发">${esc(r && r.experience)}</textarea>
+      <label>项目经历</label>
+      <textarea id="rProject" placeholder="项目名称、职责、技术栈、成果">${esc(r && r.project_exp)}</textarea>
+      <label>教育经历</label>
+      <textarea id="rEduExp" placeholder="学校、专业、起止时间">${esc(r && r.edu_exp)}</textarea>
+      <label>自我评价</label>
+      <textarea id="rSelf" placeholder="优势、方向、期望">${esc(r && r.self_eval)}</textarea>
+      ${r && r.attachment_name ? `<p class="match">当前附件：${fileLink(r.attachment_name, r.attachment_path)}（重新选择将替换）</p>` : ''}
+      <p><button type="submit">${id ? '保存修改' : '创建简历'}</button>
+        <button type="button" class="tiny ghost" onclick="document.getElementById('resumeEditor').innerHTML=''">取消</button></p>
+    </form>`;
+}
+
+// saveResumeForm：提交简历表单
+async function saveResumeForm(e) {
+  e.preventDefault();
+  const body = {
+    title: document.getElementById('rTitle').value,
+    name: document.getElementById('rName').value,
+    education: document.getElementById('rEdu').value,
+    jobStatus: document.getElementById('rJobStatus').value,
+    expectedCity: document.getElementById('rCity').value,
+    availableTime: document.getElementById('rAvailable').value,
+    expectedSalaryMin: document.getElementById('rSalMin').value,
+    expectedSalaryMax: document.getElementById('rSalMax').value,
+    visibility: document.getElementById('rVisibility').value,
+    skills: document.getElementById('rSkills').value,
+    experience: document.getElementById('rExp').value,
+    projectExp: document.getElementById('rProject').value,
+    eduExp: document.getElementById('rEduExp').value,
+    selfEval: document.getElementById('rSelf').value
+  };
+  const file = document.getElementById('rFile').files[0]; // 附件（可选）
+  if (file) {
+    body.attachmentName = file.name;
+    body.attachmentBase64 = await readFileAsBase64(file);
+  }
+  try {
+    const id = window.__editingResumeId;
+    if (id) await api(`/api/resumes/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    else await api('/api/resumes', { method: 'POST', body: JSON.stringify(body) });
+    await openTab('resume'); // 刷新列表
+  } catch (err) { document.getElementById('resumeMsg').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
+}
+
+// setDefaultResume / deleteResume / showResumeHistory：简历的其它操作
+async function setDefaultResume(id) {
+  try { await api(`/api/resumes/${id}/default`, { method: 'POST' }); await openTab('resume'); }
+  catch (err) { alert(err.message); }
+}
+
+async function deleteResume(id) {
+  if (!confirm('确定删除这份简历吗？')) return;
+  try { await api(`/api/resumes/${id}`, { method: 'DELETE' }); await openTab('resume'); }
+  catch (err) { alert(err.message); }
+}
+
+async function showResumeHistory(id) {
+  const rows = await api(`/api/resumes/${id}/history`);
+  alert(rows.length ? '该简历共保存过 ' + rows.length + ' 个历史版本：\n' + rows.map((h) => timeFmt(h.created_at)).join('\n') : '暂无历史版本');
+}
 
 async function saveResume(e) {
   e.preventDefault();
@@ -346,7 +466,8 @@ async function searchJobs(page) {
           <td>${esc(j.experience)}</td>
           <td class="match">${esc(j.requirements)}</td>
           <td>${user.role === 'seeker'
-            ? `<button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>`
+            ? `<button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>
+               <button class="tiny ghost" onclick="toggleFavorite(${j.id})">收藏</button>`
             : '<span class="match">企业端</span>'}</td>
         </tr>`).join('')}
     </table>
@@ -369,28 +490,178 @@ async function applyJob(id, btn) {
   }
 }
 PANELS.applications = async (p) => {
-  const apps = await api('/api/applications/mine');
+  const apps = await api('/api/applications/mine'); // 拉取投递记录
+  window.__apps = apps; // 缓存给筛选使用
   p.innerHTML = `
     <div class="card">
       <div class="card-head">我的投递</div>
       <div class="card-body">
-        ${apps.length ? `
+        <div class="filters">
+          <div><label>状态</label>
+            <select id="appStatus">
+              <option value="">全部</option>
+              <option value="submitted">已投递</option>
+              <option value="viewed">已查看</option>
+              <option value="interview">面试中</option>
+              <option value="accepted">已录用</option>
+              <option value="rejected">未通过</option>
+            </select>
+          </div>
+          <div><label>关键词</label><input type="search" id="appKeyword" placeholder="职位或企业名"></div>
+          <div><label>排序</label>
+            <select id="appSort"><option value="time">按投递时间</option><option value="score">按匹配分</option></select>
+          </div>
+          <div><button onclick="renderApplications()">筛选</button></div>
+        </div>
+        <div id="appsTable"></div>
+      </div>
+    </div>`;
+  renderApplications(); // 首次渲染
+};
+
+// renderApplications：按筛选条件渲染投递列表
+function renderApplications() {
+  const status = document.getElementById('appStatus').value;
+  const kw = document.getElementById('appKeyword').value.trim().toLowerCase();
+  const sort = document.getElementById('appSort').value;
+  let rows = (window.__apps || []).filter((a) => {
+    const okStatus = !status || a.status === status; // 状态筛选
+    const okKw = !kw || String(a.job_title || '').toLowerCase().includes(kw) || String(a.company_name || '').toLowerCase().includes(kw); // 关键词
+    return okStatus && okKw;
+  });
+  rows.sort(sort === 'score' ? (a, b) => b.match_score - a.match_score : (a, b) => b.id - a.id); // 排序
+  const t = document.getElementById('appsTable');
+  if (!rows.length) { t.innerHTML = '<div class="empty">没有符合条件的投递记录</div>'; return; }
+  t.innerHTML = `
+    <table class="grid">
+      <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>匹配分</th><th>状态</th><th>投递时间</th><th>操作</th></tr>
+      ${rows.map((a) => `
+        <tr>
+          <td><b>${esc(a.job_title)}</b></td>
+          <td>${esc(a.company_name)}</td>
+          <td>${esc(a.location)}</td>
+          <td>${a.salary_min || 0}-${a.salary_max || '不限'}</td>
+          <td><b>${a.match_score}</b></td>
+          <td><span class="badge">${statusLabel(a.status)}</span></td>
+          <td>${timeFmt(a.created_at)}</td>
+          <td><button class="tiny ghost" onclick="showEvents(${a.id})">轨迹</button></td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+// showEvents：查看投递轨迹（谁在什么时候看了/改了状态）
+async function showEvents(id) {
+  try {
+    const rows = await api(`/api/applications/${id}/events`);
+    if (!rows.length) return alert('暂无轨迹记录');
+    alert(rows.map((e) => `${timeFmt(e.created_at)}  ${e.detail || e.action}`).join('\n'));
+  } catch (err) { alert(err.message); }
+}
+
+PANELS.interviews = async (p) => {
+  const list = await api('/api/interviews/mine'); // 我的面试邀约
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">我的面试</div>
+      <div class="card-body">
+        ${list.length ? `
         <table class="grid">
-          <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>匹配分</th><th>匹配理由</th><th>状态</th></tr>
-          ${apps.map((a) => `
+          <tr><th>职位</th><th>企业</th><th>面试时间</th><th>方式</th><th>状态</th><th>操作</th></tr>
+          ${list.map((i) => `
             <tr>
-              <td><b>${esc(a.job_title)}</b></td>
-              <td>${esc(a.company_name)}</td>
-              <td>${esc(a.location)}</td>
-              <td>${a.salary_min || 0}-${a.salary_max || '不限'}</td>
-              <td><b>${a.match_score}</b></td>
-              <td class="match">${esc(a.match_reasons)}</td>
-              <td><span class="badge">${statusLabel(a.status)}</span></td>
+              <td><b>${esc(i.job_title || '-')}</b></td>
+              <td>${esc(i.company || '-')}</td>
+              <td>${timeFmt(i.scheduled_at)}</td>
+              <td>${i.mode === 'offline' ? '线下' : `线上 ${i.link ? `<a class="file" href="${esc(i.link)}" target="_blank" rel="noopener">入会</a>` : ''}`}</td>
+              <td><span class="badge">${interviewLabel(i.status)}</span></td>
+              <td>
+                ${['pending', 'rescheduled'].includes(i.status) ? `
+                  <button class="tiny" onclick="respondInterview(${i.id},'confirm')">确认</button>
+                  <button class="tiny ghost" onclick="rescheduleInterview(${i.id})">改约</button>
+                  <button class="tiny ghost" onclick="respondInterview(${i.id},'decline')">拒绝</button>` : '<span class="match">已处理</span>'}
+              </td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">还没有投递记录，去「搜索职位」投递吧</div>'}
+        </table>` : '<div class="empty">还没有面试邀约</div>'}
       </div>
     </div>`;
 };
+
+// interviewLabel：面试状态文案
+function interviewLabel(s) {
+  return { pending: '待确认', confirmed: '已确认', declined: '已拒绝', rescheduled: '申请改约' }[s] || s;
+}
+
+// respondInterview：确认或拒绝面试
+async function respondInterview(id, action) {
+  const note = action === 'decline' ? (prompt('请填写拒绝原因（可留空）') || '') : '';
+  try {
+    await api(`/api/interviews/${id}/respond`, { method: 'POST', body: JSON.stringify({ action, note }) });
+    await openTab('interviews');
+  } catch (err) { alert(err.message); }
+}
+
+// rescheduleInterview：申请改约时间
+async function rescheduleInterview(id) {
+  const t = prompt('请输入希望改约的时间，格式 2026-11-20 15:00');
+  if (!t) return;
+  try {
+    await api(`/api/interviews/${id}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'reschedule', newTime: t.replace(' ', 'T'), note: '候选人申请改约' })
+    });
+    await openTab('interviews');
+  } catch (err) { alert(err.message); }
+}
+
+PANELS.favorites = async (p) => {
+  const list = await api('/api/favorites'); // 收藏的职位
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">我的收藏</div>
+      <div class="card-body">
+        ${list.length ? `
+        <table class="grid">
+          <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>收藏时间</th><th>操作</th></tr>
+          ${list.map((j) => `
+            <tr>
+              <td><b>${esc(j.title)}</b></td>
+              <td>${esc(j.company)}</td>
+              <td>${esc(j.location)}</td>
+              <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+              <td>${timeFmt(j.created_at)}</td>
+              <td>
+                <button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>
+                <button class="tiny ghost" onclick="toggleFavorite(${j.id})">取消收藏</button>
+              </td>
+            </tr>`).join('')}
+        </table>` : '<div class="empty">还没有收藏职位，去「搜索职位」看看</div>'}
+      </div>
+    </div>`;
+};
+
+// askInterview：企业发起面试邀约（填写时间与方式）
+async function askInterview(id) {
+  const t = prompt('请输入面试时间，格式 2026-11-20 15:00');
+  if (!t) return; // 取消则不发起
+  const online = confirm('点击“确定”为线上面试，点“取消”为线下面试');
+  try {
+    await api(`/api/applications/${id}/interview`, {
+      method: 'POST',
+      body: JSON.stringify({ scheduledAt: t.trim().replace(' ', 'T'), mode: online ? 'online' : 'offline' })
+    });
+    alert('面试邀约已发送，等待候选人确认');
+    await openTab('apps');
+  } catch (err) { alert(err.message); }
+}
+
+// toggleFavorite：收藏/取消收藏职位
+async function toggleFavorite(jobId) {
+  try {
+    const d = await api(`/api/favorites/${jobId}`, { method: 'POST' });
+    alert(d.favorited ? '已收藏' : '已取消收藏');
+    if (typeof openTab === 'function') await openTab('favorites');
+  } catch (err) { alert(err.message); }
+}
 
 function statusLabel(s) {
   return { submitted: '已投递', viewed: '已查看', interview: '面试中', accepted: '已录用', rejected: '未通过' }[s] || s;
@@ -709,7 +980,7 @@ PANELS.apps = async (p) => {
               <td><span class="badge">${statusLabel(a.status)}</span></td>
               <td>
                 <button class="tiny" onclick="setAppStatus(${a.id},'viewed')">已查看</button>
-                <button class="tiny" onclick="setAppStatus(${a.id},'interview')">邀面试</button>
+                <button class="tiny" onclick="askInterview(${a.id})">邀面试</button>
                 <button class="tiny ghost" onclick="setAppStatus(${a.id},'accepted')">录用</button>
                 <button class="tiny ghost" onclick="setAppStatus(${a.id},'rejected')">不通过</button>
                 <button class="tiny ghost" onclick="requestContact(${a.seeker_id})">交换联系方式</button>
