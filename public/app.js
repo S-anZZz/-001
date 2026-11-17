@@ -63,6 +63,18 @@ function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// badge：生成状态徽标，data-s 交给 CSS 按状态区分黑白色阶
+function badge(text, tone) {
+  return `<span class="badge" data-s="${esc(tone || '')}">${esc(text)}</span>`;
+}
+
+// scoreCell：匹配分单元格，80 分以上用黑块强调，60 分以上描边
+function scoreCell(score) {
+  const n = Number(score) || 0; // 取数值
+  const tone = n >= 80 ? 'high' : n >= 60 ? 'mid' : 'low'; // 分档
+  return `<b class="score ${tone}">${n}</b>`;
+}
+
 // login：登录处理，成功后进入工作台
 async function login(e) {
   e.preventDefault(); // 阻止表单默认提交
@@ -152,7 +164,7 @@ async function register(e) {
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
   token = null; user = null; // 清空内存中的登录状态
-  document.getElementById('authWrap').style.display = 'block'; // 显示登录区
+  document.getElementById('authWrap').style.display = 'block'; // 显示登录区（统一黑色面板）
   document.getElementById('dashWrap').style.display = 'none'; // 隐藏工作台
   document.getElementById('userBox').style.display = 'none'; // 隐藏用户信息
 }
@@ -169,12 +181,16 @@ function enterDashboard() {
   document.getElementById('authWrap').style.display = 'none'; // 隐藏登录区
   document.getElementById('dashWrap').style.display = 'block'; // 显示工作台
   document.getElementById('userBox').style.display = 'flex'; // 显示用户信息
-  // 若有头像则展示，否则隐藏
-  const avatar = document.getElementById('userAvatar');
-  avatar.style.display = user.avatar_path ? 'block' : 'none';
-  avatar.src = user.avatar_path ? '/uploads/' + user.avatar_path : '';
-  document.getElementById('userLabel').textContent =
-    `${user.name}（${{ seeker: '求职者', company: '企业', admin: '管理员' }[user.role]}）`; // 显示用户信息
+  // 头像：有图显示图片，无图显示姓名首字占位
+  const avatar = document.getElementById('userAvatar'); // 头像图片节点
+  const initial = document.getElementById('userInitial'); // 首字占位节点
+  avatar.style.display = user.avatar_path ? 'block' : 'none'; // 有头像才显示图片
+  avatar.src = user.avatar_path ? '/uploads/' + user.avatar_path : ''; // 头像地址
+  initial.style.display = user.avatar_path ? 'none' : 'grid'; // 否则显示占位
+  initial.textContent = (user.name || '用').slice(0, 1); // 占位文字取姓名首字
+  document.getElementById('userLabel').textContent = user.name || '-'; // 显示姓名
+  document.getElementById('userRole').textContent =
+    { seeker: '求职者', company: '企业', admin: '管理员' }[user.role]; // 显示角色
   renderTabs(); // 渲染页签
   openTab('home'); // 打开首页
 }
@@ -303,7 +319,7 @@ PANELS.resume = async (p) => {
           <tr><th>简历名称</th><th>姓名</th><th>期望岗位城市</th><th>期望薪资</th><th>开放度</th><th>更新时间</th><th>操作</th></tr>
           ${list.map((r) => `
             <tr>
-              <td><b>${esc(r.title || '我的简历')}</b>${r.is_default ? ' <span class="badge">主简历</span>' : ''}</td>
+              <td><b>${esc(r.title || '我的简历')}</b>${r.is_default ? ' ' + badge('主简历', 'viewed') : ''}</td>
               <td>${esc(r.name)}</td>
               <td>${esc(r.expected_city || '-')}</td>
               <td>${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
@@ -541,14 +557,14 @@ async function searchJobs(page) {
       ${jobs.map((j) => `
         <tr>
           <td><b style="cursor:pointer" onclick="openJobDetail(${j.id})">${esc(j.title)}</b>
-              ${j.is_top ? '<span class="badge">置顶</span>' : ''}${j.is_urgent ? '<span class="badge">急招</span>' : ''}
+              ${j.is_top ? badge('置顶', 'accepted') : ''}${j.is_urgent ? badge('急招', 'interview') : ''}
               <div class="match">${timeFmt(j.created_at)} · 浏览 ${j.view_count || 0}</div></td>
           <td>${esc(j.company || j.company_name)}</td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}<div class="match">${jobTypeLabel(j.job_type)}</div></td>
           <td>${esc(j.education)}</td>
           <td>${esc(j.experience)}</td>
-          <td class="match">${esc(j.requirements)}</td>
+          <td class="match truncate" title="${esc(j.requirements)}">${esc(j.requirements)}</td>
           <td>${user.role === 'seeker'
             ? `<button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>
                <button class="tiny ghost" onclick="toggleFavorite(${j.id})">收藏</button>`
@@ -625,8 +641,8 @@ function renderApplications() {
           <td>${esc(a.company_name)}</td>
           <td>${esc(a.location)}</td>
           <td>${a.salary_min || 0}-${a.salary_max || '不限'}</td>
-          <td><b>${a.match_score}</b></td>
-          <td><span class="badge">${statusLabel(a.status)}</span></td>
+          <td>${scoreCell(a.match_score)}</td>
+          <td>${badge(statusLabel(a.status), a.status)}</td>
           <td>${timeFmt(a.created_at)}</td>
           <td><button class="tiny ghost" onclick="showEvents(${a.id})">轨迹</button></td>
         </tr>`).join('')}
@@ -657,7 +673,7 @@ PANELS.interviews = async (p) => {
               <td>${esc(i.company || '-')}</td>
               <td>${timeFmt(i.scheduled_at)}</td>
               <td>${i.mode === 'offline' ? '线下' : `线上 ${i.link ? `<a class="file" href="${esc(i.link)}" target="_blank" rel="noopener">入会</a>` : ''}`}</td>
-              <td><span class="badge">${interviewLabel(i.status)}</span></td>
+              <td>${badge(interviewLabel(i.status), interviewTone(i.status))}</td>
               <td>
                 ${['pending', 'rescheduled'].includes(i.status) ? `
                   <button class="tiny" onclick="respondInterview(${i.id},'confirm')">确认</button>
@@ -673,6 +689,11 @@ PANELS.interviews = async (p) => {
 // interviewLabel：面试状态文案
 function interviewLabel(s) {
   return { pending: '待确认', confirmed: '已确认', declined: '已拒绝', rescheduled: '申请改约' }[s] || s;
+}
+
+// interviewTone：面试状态对应的徽标色调（映射到 CSS 的 data-s）
+function interviewTone(s) {
+  return { pending: 'pending', confirmed: 'accepted', declined: 'rejected', rescheduled: 'interview' }[s] || 'viewed';
 }
 
 // respondInterview：确认或拒绝面试
@@ -779,17 +800,44 @@ async function previewResume(id) {
   const list = await api('/api/resumes');
   const r = list.find((x) => x.id === id);
   if (!r) return;
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(r.name)}的简历</title>
-    <style>body{font-family:-apple-system,'PingFang SC',sans-serif;padding:32px;line-height:1.8;color:#111}
-    h1{font-size:22px;margin:0 0 6px}h2{font-size:15px;margin:18px 0 6px;border-bottom:1px solid #000;padding-bottom:4px}
-    .muted{color:#666;font-size:13px}</style></head><body>
-    <h1>${esc(r.name)}</h1>
-    <div class="muted">${esc(r.education || '')} · ${esc(r.expected_city || '')} · 期望 ${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'} · ${esc(jobStatusLabel(r.job_status))}</div>
-    <h2>技能标签</h2><div>${esc(r.skills || '-')}</div>
-    <h2>工作经历</h2><div>${esc(r.experience || '-')}</div>
-    <h2>项目经历</h2><div>${esc(r.project_exp || '-')}</div>
-    <h2>教育经历</h2><div>${esc(r.edu_exp || '-')}</div>
-    <h2>自我评价</h2><div>${esc(r.self_eval || '-')}</div>
+  const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${esc(r.name)}的简历</title>
+    <style>
+      *{box-sizing:border-box}
+      body{margin:0;padding:40px 20px;background:#efeeea;color:#0d0d0d;line-height:1.75;
+        font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:14px}
+      .sheet{max-width:780px;margin:0 auto;background:#fff;border:1px solid #0d0d0d;border-radius:6px;padding:40px 44px;
+        box-shadow:0 10px 30px -14px rgba(13,13,13,.3)}
+      .head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;
+        border-bottom:2px solid #0d0d0d;padding-bottom:16px;margin-bottom:8px}
+      h1{font-size:26px;margin:0;letter-spacing:-.01em}
+      .role{font-size:12px;color:#5f5f5c;letter-spacing:.08em;text-transform:uppercase}
+      .muted{color:#5f5f5c;font-size:13px;margin:12px 0 0}
+      .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+      .tag{border:1px solid #d9d9d4;border-radius:999px;padding:2px 10px;font-size:12px}
+      h2{font-size:14px;margin:26px 0 10px;display:flex;align-items:center;gap:8px;letter-spacing:.04em}
+      h2::before{content:'';width:7px;height:7px;background:#0d0d0d}
+      .body{white-space:pre-wrap;word-break:break-word}
+      .foot{margin-top:32px;padding-top:12px;border-top:1px solid #e9e9e4;color:#8c8c88;font-size:12px;
+        display:flex;justify-content:space-between}
+      @media print{body{background:#fff;padding:0}.sheet{border:0;box-shadow:none;padding:0}}
+    </style></head><body>
+    <div class="sheet">
+      <div class="head">
+        <div>
+          <h1>${esc(r.name)}</h1>
+          <div class="muted">${esc(r.education || '')}　·　${esc(r.expected_city || '')}　·　期望 ${r.expected_salary_min || '-'} - ${r.expected_salary_max || '-'}　·　${esc(jobStatusLabel(r.job_status))}</div>
+        </div>
+        <div class="role">Resume</div>
+      </div>
+      <div class="tags">${(r.skills || '').split(/[,，]/).filter(Boolean).map((s) => `<span class="tag">${esc(s.trim())}</span>`).join('')}</div>
+      <h2>工作经历</h2><div class="body">${esc(r.experience || '-')}</div>
+      <h2>项目经历</h2><div class="body">${esc(r.project_exp || '-')}</div>
+      <h2>教育经历</h2><div class="body">${esc(r.edu_exp || '-')}</div>
+      <h2>自我评价</h2><div class="body">${esc(r.self_eval || '-')}</div>
+      <div class="foot"><span>add work · 在线求职招聘系统</span><span>${esc(r.title || '我的简历')}</span></div>
+    </div>
     </body></html>`;
   const w = window.open('', '_blank'); // 打开新窗口
   w.document.write(html); // 写入简历 HTML
@@ -861,7 +909,7 @@ PANELS.profile = async (p) => {
   const c = await api('/api/company/profile'); // 企业资料
   p.innerHTML = `
     <div class="card">
-      <div class="card-head">企业资料 ${c.verified ? '<span class="badge">已认证</span>' : '<span class="badge">待认证</span>'}</div>
+      <div class="card-head">企业资料 ${c.verified ? badge('已认证', 'accepted') : badge('待认证', 'pending')}</div>
       <div class="card-body">
         <div id="profileMsg"></div>
         <form class="form" onsubmit="saveProfile(event)">
@@ -946,7 +994,7 @@ async function searchTalent() {
       ${rows.map((r) => `
         <tr>
           <td><b>${esc(r.name)}</b></td>
-          <td class="match">${esc(r.skills)}</td>
+          <td class="match truncate" title="${esc(r.skills)}">${esc(r.skills)}</td>
           <td>${esc(r.experience)}</td>
           <td>${esc(r.education)}</td>
           <td>${esc(r.expected_city || '-')} ${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
@@ -967,8 +1015,8 @@ async function showRecommend(p) {
     const rows = await api('/api/recommend/talent');
     return `<div class="card"><div class="card-head">为你推荐的候选人</div><div class="card-body">
       ${rows.length ? `<table class="grid"><tr><th>姓名</th><th>技能</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
-        ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="match">${esc(r.skills)}</td>
-        <td><b>${r.match.score}</b></td><td class="match">${esc(r.match.reasons)}</td>
+        ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="match truncate" title="${esc(r.skills)}">${esc(r.skills)}</td>
+        <td>${scoreCell(r.match.score)}</td><td class="match">${esc(r.match.reasons)}</td>
         <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td></tr>`).join('')}</table>`
         : '<div class="empty">暂无推荐</div>'}
     </div></div>`;
@@ -977,7 +1025,7 @@ async function showRecommend(p) {
   return `<div class="card"><div class="card-head">为你推荐的职位</div><div class="card-body">
     ${rows.length ? `<table class="grid"><tr><th>职位</th><th>企业</th><th>薪资</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
       ${rows.map((j) => `<tr><td><b>${esc(j.title)}</b></td><td>${esc(j.company)}</td>
-      <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td><td><b>${j.match.score}</b></td>
+      <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td><td>${scoreCell(j.match.score)}</td>
       <td class="match">${esc(j.match.reasons)}</td>
       <td><button class="tiny" onclick="applyJob(${j.id}, this)">投递</button></td></tr>`).join('')}</table>`
       : '<div class="empty">完善简历后即可获得推荐</div>'}
@@ -1003,7 +1051,7 @@ async function openJobDetail(id) {
              <b>经验：</b>${esc(d.experience || '不限')}</p>
           <p><b>职位要求：</b>${esc(d.requirements || '未填写')}</p>
           ${d.benefits ? `<p><b>福利：</b>${esc(d.benefits)}</p>` : ''}
-          <p><b>企业：</b>${esc(d.company || '-')} ${d.verified ? '<span class="badge">已认证</span>' : ''}
+          <p><b>企业：</b>${esc(d.company || '-')} ${d.verified ? badge('已认证', 'accepted') : ''}
              ${d.company_size ? '　规模：' + esc(d.company_size) : ''}</p>
           ${d.company_intro ? `<p class="match">${esc(d.company_intro)}</p>` : ''}
           <p><b>相似职位：</b>${sim.length ? sim.map((x) => `<a class="file" href="javascript:openJobDetail(${x.id})">${esc(x.title)}</a>`).join(' ') : '暂无'}</p>
@@ -1129,7 +1177,7 @@ PANELS.contact = async (p) => {
   const threads = await api('/api/messages/threads').catch(() => []); // 会话未读数
   const unreadOf = (uid) => {
     const t = threads.find((x) => x.peer_id === uid); // 找到对应会话
-    return t && t.unread ? ` <span class="badge">${t.unread} 未读</span>` : ''; // 显示未读角标
+    return t && t.unread ? ' ' + badge(t.unread + ' 未读', 'accepted') : ''; // 显示未读角标
   };
   const rows = [];
   if (d.received.length) {
@@ -1147,7 +1195,7 @@ PANELS.contact = async (p) => {
   const sentRows = d.sent.map((r) => `
     <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
     <td>${esc(r.company_name || '-')}</td>
-    <td><span class="badge">${r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝'}</span>
+    <td>${badge(r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝', r.status)}
       <button class="tiny ghost" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}')">聊天${unreadOf(r.to_user_id)}</button>
       ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
     </td></tr>`).join('');
@@ -1189,7 +1237,7 @@ PANELS.notify = async (p) => {
           <button class="tiny" onclick="readAllNotify()">全部已读</button></div>` : ''}
         ${list.length ? list.map((n) => `
           <div class="msg ${n.is_read ? '' : 'unread'}" style="border-left:4px solid #000;margin-bottom:8px">
-            <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息' }[n.type] || n.type}</b>
+            <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息', account: '账号状态', resume: '简历动态', job: '职位动态', favorite: '收藏动态' }[n.type] || n.type}</b>
             <span class="match"> · ${timeFmt(n.created_at)}</span>
             <div>${esc(n.message)}</div>
           </div>`).join('') : '<div class="empty">暂无通知</div>'}
@@ -1211,9 +1259,15 @@ async function companyJobs(p) {
       <div class="card-head">职位管理</div>
       <div class="card-body">
         <div id="jobMsg"></div>
-        <p><button class="tiny ghost" onclick="batchOffline()">批量下架选中职位</button></p>
-        <button onclick="toggleJobForm()">＋ 发布新职位</button>
+        <div class="list-bar">
+          <span class="match">共 ${jobs.length} 个职位</span>
+          <span class="inline">
+            <button class="tiny ghost" onclick="batchOffline()">批量下架选中职位</button>
+            <button class="tiny" onclick="toggleJobForm()">＋ 发布新职位</button>
+          </span>
+        </div>
         <div class="card" id="jobForm" style="display:none;margin-top:12px">
+          <div class="card-head">填写职位信息</div>
           <div class="card-body">
             <form class="form" onsubmit="saveJob(event)">
               <label>职位标题</label><input type="text" id="jTitle" required>
@@ -1343,11 +1397,11 @@ function renderJobsTable(jobs) {
       ${jobs.map((j) => `
         <tr>
           <td><input type="checkbox" class="jobPick" value="${j.id}"></td>
-          <td><b>${esc(j.title)}</b>${j.is_top ? ' <span class="badge">置顶</span>' : ''}${j.is_urgent ? ' <span class="badge">急招</span>' : ''}</td>
+          <td><b>${esc(j.title)}</b>${j.is_top ? ' ' + badge('置顶', 'accepted') : ''}${j.is_urgent ? ' ' + badge('急招', 'interview') : ''}</td>
           <td>${esc(j.location)}</td>
           <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
           <td>${j.apply_count || 0}</td>
-          <td><span class="badge">${{ offline: '已下架', published: '已发布' }[j.status] || j.status}</span></td>
+          <td>${badge({ offline: '已下架', published: '已发布' }[j.status] || j.status, j.status)}</td>
           <td>
             <button class="tiny" onclick="editJob(${j.id})">编辑</button>
             <button class="tiny ghost" onclick="jobOp(${j.id},'refresh')">刷新</button>
@@ -1397,12 +1451,12 @@ PANELS.apps = async (p) => {
                     : `<button class="tiny" onclick="previewAttachment('${esc(a.attachment_name || '')}', '${esc(a.attachment_path)}')">预览</button>
                        <a class="file" href="/uploads/${encodeURIComponent(a.attachment_path)}" download>下载</a>`)
                 : '<span class="match">未上传</span>'}</td>
-              <td>${esc(a.skills)}</td>
-              <td>${esc(a.experience)}</td>
+              <td class="match truncate" title="${esc(a.skills)}">${esc(a.skills)}</td>
+              <td class="truncate" title="${esc(a.experience)}">${esc(a.experience)}</td>
               <td>${esc(a.education)}</td>
-              <td><b>${a.match_score}</b></td>
-              <td class="match">${esc(a.match_reasons)}</td>
-              <td><span class="badge">${statusLabel(a.status)}</span></td>
+              <td>${scoreCell(a.match_score)}</td>
+              <td class="match truncate" title="${esc(a.match_reasons)}">${esc(a.match_reasons)}</td>
+              <td>${badge(statusLabel(a.status), a.status)}</td>
               <td>
                 <button class="tiny" onclick="setAppStatus(${a.id},'viewed')">已查看</button>
                 <button class="tiny" onclick="askInterview(${a.id})">邀面试</button>
@@ -1448,7 +1502,8 @@ PANELS.companies = async (p) => {
               <td>${esc(c.username)}</td>
               <td>${esc(c.phone)}</td>
               <td>${fileLink('查看许可证', c.license_path)}</td>
-              <td><span class="badge">${c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : '已停用'}</span></td>
+              <td>${badge(c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : '已停用',
+                c.status === 'active' ? 'accepted' : c.status === 'pending' ? 'pending' : 'banned')}</td>
               <td>${c.status === 'pending'
                 ? `<button class="tiny" onclick="approveCompany(${c.id})">通过</button>
                    <button class="tiny ghost" onclick="rejectCompany(${c.id})">驳回</button>`
@@ -1492,7 +1547,7 @@ PANELS.users = async (p) => {
               <td>${esc(u.name)}</td>
               <td>${esc(u.company_name || '-')}</td>
               <td>${esc(u.phone || '-')}</td>
-              <td><span class="badge">${{ active: '正常', pending: '待审核', banned: '已停用' }[u.status] || u.status}</span></td>
+              <td>${badge({ active: '正常', pending: '待审核', banned: '已停用' }[u.status] || u.status, u.status)}</td>
               <td>${u.role !== 'admin'
                 ? `<button class="tiny ghost" onclick="toggleUserStatus(${u.id},'active')">启用</button>
                    <button class="tiny ghost" onclick="toggleUserStatus(${u.id},'banned')">停用</button>`
@@ -1509,6 +1564,23 @@ async function toggleUserStatus(id, status) {
     const active = document.querySelector('#dashTabs button.active');
     await openTab(active ? active.dataset.t : 'companies');
   } catch (err) { alert(err.message); }
+}
+
+// wrapTables：为表格套上横向滚动容器，窄屏时表格内部滚动而不是撑破页面
+function wrapTables(root) {
+  (root || document).querySelectorAll('table.grid').forEach((t) => {
+    if (t.parentElement && t.parentElement.classList.contains('table-wrap')) return; // 已包裹则跳过
+    const box = document.createElement('div'); // 新建滚动容器
+    box.className = 'table-wrap'; // 标记容器类名
+    t.parentNode.insertBefore(box, t); // 先把容器插到表格原位置
+    box.appendChild(t); // 再把表格移进容器
+  });
+}
+
+// 监听面板内容变化：后续异步渲染出来的表格同样自动套上滚动容器
+const panelEl = document.getElementById('dashPanels');
+if (panelEl && window.MutationObserver) {
+  new MutationObserver(() => wrapTables(panelEl)).observe(panelEl, { childList: true, subtree: true });
 }
 
 (async function init() {

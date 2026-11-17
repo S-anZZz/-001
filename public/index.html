@@ -3,36 +3,81 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="add work · 在线求职招聘系统：企业发布职位，求职者投递简历，按技能标签智能匹配。">
+  <meta name="theme-color" content="#0d0d0d">
   <title>add work · 在线求职招聘</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <!-- ==================== 顶栏：品牌 + 当前登录用户 ==================== -->
   <header>
-    <div class="brand">add work <small>在线求职招聘系统</small></div>
+    <div class="brand">
+      <span class="mark"></span>
+      <span>add work</span>
+      <small>在线求职招聘系统</small>
+    </div>
     <div class="user-box" id="userBox" style="display:none">
-      <img id="userAvatar" src="" alt="" style="width:26px;height:26px;border:1px solid #fff;border-radius:4px;object-fit:cover">
-      <span id="userLabel"></span>
+      <div class="user-chip">
+        <img id="userAvatar" src="" alt="">
+        <span class="avatar-fallback" id="userInitial">用</span>
+        <span class="who">
+          <b id="userLabel"></b>
+          <span id="userRole"></span>
+        </span>
+      </div>
       <button class="ghost tiny" onclick="logout()">退出登录</button>
     </div>
   </header>
 
-  <div class="wrap" id="authWrap">
-    <div class="card">
-      <div class="card-head">登录 / 注册</div>
-      <div class="card-body">
+  <!-- ==================== 登录 / 注册页 ==================== -->
+  <div class="auth-wrap" id="authWrap">
+    <!-- 统一黑色面板：左侧品牌叙述 + 右侧登录表单，共处同一块面内以细线分隔 -->
+    <div class="auth-shell">
+      <!-- 品牌叙述区 -->
+      <section class="auth-hero">
+        <div class="hero-mark"><i></i> add work</div>
+        <h1 class="hero-title">把合适的人<br>送到合适的岗位</h1>
+        <p class="hero-desc">
+          企业发布职位后立即进入职位库，求职者按关键词、地点、薪资筛选并一键投递；
+          系统依据技能标签自动匹配打分，给出可读的匹配理由。
+        </p>
+        <ul class="hero-list">
+          <li>
+            <b>发布即上架</b>
+            <span>企业注册通过审核后即可发布职位，无需二次审核，直接进入职位库</span>
+          </li>
+          <li>
+            <b>双向匹配推荐</b>
+            <span>简历技能标签与职位要求自动比对，求职者与招聘方各自获得推荐列表</span>
+          </li>
+          <li>
+            <b>面试闭环</b>
+            <span>发出线上面试邀约，候选人可确认、改约或拒绝，全程留痕</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- 登录 / 注册表单：与左栏同处黑块，仅用竖向细线区分 -->
+      <section class="auth-panel">
+        <div class="auth-panel-head"><span class="auth-panel-title">登录 / 注册</span></div>
         <div id="authMsg"></div>
+
         <div class="tabs">
           <button id="tabLogin" class="active" onclick="switchAuth('login')">登录</button>
           <button id="tabReg" onclick="switchAuth('register')">注册</button>
         </div>
 
+        <!-- 登录表单 -->
         <form class="form" id="loginForm" onsubmit="login(event)">
-          <label>用户名</label><input type="text" id="loginUser" required>
-          <label>密码</label><input type="password" id="loginPwd" required>
-          <p><button type="submit">登录</button>
-            <button type="button" class="tiny ghost" onclick="forgotPassword()">忘记密码</button></p>
+          <label>用户名</label><input type="text" id="loginUser" autocomplete="username" required>
+          <label>密码</label><input type="password" id="loginPwd" autocomplete="current-password" required>
+          <p>
+            <button type="submit">登录</button>
+            <button type="button" class="ghost" onclick="forgotPassword()">忘记密码</button>
+          </p>
         </form>
 
+        <!-- 注册表单 -->
         <form class="form" id="regForm" style="display:none" onsubmit="register(event)">
           <div class="row">
             <div>
@@ -45,11 +90,11 @@
             <div><label>姓名（企业填联系人）</label><input type="text" id="regName" required></div>
           </div>
           <div class="row">
-            <div><label>用户名</label><input type="text" id="regUser" required></div>
-            <div><label>密码（4~8位）</label><input type="password" id="regPwd" minlength="4" maxlength="8" required></div>
+            <div><label>用户名</label><input type="text" id="regUser" autocomplete="username" required></div>
+            <div><label>密码（4~8位）</label><input type="password" id="regPwd" minlength="4" maxlength="8" autocomplete="new-password" required></div>
           </div>
           <div class="row">
-            <div><label>确认密码</label><input type="password" id="regPwd2" minlength="4" maxlength="8" required></div>
+            <div><label>确认密码</label><input type="password" id="regPwd2" minlength="4" maxlength="8" autocomplete="new-password" required></div>
             <div><label>头像（可选）</label><input type="file" id="regAvatar" accept=".png,.jpg,.jpeg,.gif,.webp"></div>
           </div>
 
@@ -63,13 +108,18 @@
           </div>
           <p><button type="submit">注册</button></p>
         </form>
-        <p style="color:#666">管理员账号：admin ／ 密码：root123456（企业注册需管理员审核后才能登录）</p>
-      </div>
+
+        <p class="auth-note">
+          管理员账号 <code>admin</code> ／ 密码 <code>root123456</code><br>
+          企业注册需管理员审核后才能登录。
+        </p>
+      </section>
     </div>
   </div>
 
+  <!-- ==================== 登录后的工作台 ==================== -->
   <div class="wrap" id="dashWrap" style="display:none">
-    <div class="tabs" id="dashTabs"></div>
+    <nav class="tabs" id="dashTabs"></nav>
     <div id="dashPanels"></div>
   </div>
 
