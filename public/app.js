@@ -258,7 +258,7 @@ PANELS.home = async (p) => {
             <div class="stat-card">已录用<b>${d.apps.accepted || 0}</b></div>
             <div class="stat-card">近 7 天投递<b>${d.recentApplications || 0}</b></div>
           </div>
-          <p style="margin-top:14px">
+          <p class="toolbar">
             <button class="tiny" onclick="exportCsv('applications')">导出投递 CSV</button>
             <button class="tiny ghost" onclick="exportCsv('jobs')">导出职位 CSV</button>
             <button class="tiny ghost" onclick="exportCsv('users')">导出用户 CSV</button>
@@ -284,7 +284,7 @@ PANELS.home = async (p) => {
             <div class="stat-card">投递→面试<b>${d.conversion.applyToInterview}%</b></div>
             <div class="stat-card">面试→录用<b>${d.conversion.interviewToHire}%</b></div>
           </div>
-          <p class="match" style="margin-top:12px">提示：职位发布与修改无需审核；使用“刷新/置顶/急招”可以提升曝光。</p>
+          <p class="match hint">提示：职位发布与修改无需审核；使用“刷新/置顶/急招”可以提升曝光。</p>
         </div>
       </div>`;
     return;
@@ -298,7 +298,7 @@ PANELS.home = async (p) => {
         ${user.role === 'seeker' ? '<p class="match">提示：先完善简历，再搜索职位并投递，系统会按技能标签给出匹配分与匹配理由。</p>' : ''}
         ${user.role === 'company' ? '<p class="match">提示：企业注册通过审核后即可登录；职位发布与修改无需管理员审核，提交后立即进入职位库。</p>' : ''}
         ${user.role === 'admin' ? '<p class="match">提示：审核企业注册申请，管理用户账号。</p>' : ''}
-        ${user.role !== 'admin' ? '<div id="recommendBox" style="margin-top:14px"></div>' : ''}
+        ${user.role !== 'admin' ? '<div id="recommendBox" class="spaced"></div>' : ''}
       </div>
     </div>`;
   if (user.role !== 'admin') {
@@ -315,14 +315,14 @@ PANELS.resume = async (p) => {
       <div class="card-body">
         <div id="resumeMsg"></div>
         ${list.length ? `
-        <table class="grid">
-          <tr><th>简历名称</th><th>姓名</th><th>期望岗位城市</th><th>期望薪资</th><th>开放度</th><th>更新时间</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">简历名称</th><th scope="col">姓名</th><th scope="col">期望岗位城市</th><th scope="col">期望薪资</th><th scope="col">开放度</th><th scope="col">更新时间</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${list.map((r) => `
             <tr>
               <td><b>${esc(r.title || '我的简历')}</b>${r.is_default ? ' ' + badge('主简历', 'viewed') : ''}</td>
               <td>${esc(r.name)}</td>
               <td>${esc(r.expected_city || '-')}</td>
-              <td>${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
+              <td class="num">${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
               <td>${esc(visibilityLabel(r.visibility))}</td>
               <td>${timeFmt(r.updated_at)}</td>
               <td>
@@ -333,7 +333,7 @@ PANELS.resume = async (p) => {
                 <button class="tiny ghost" onclick="deleteResume(${r.id})">删除</button>
               </td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">还没有简历，点右上角“新建简历”创建第一份吧</div>'}
+        </tbody></table>` : '<div class="empty">还没有简历，点右上角“新建简历”创建第一份吧</div>'}
         <div id="resumeEditor"></div>
       </div>
     </div>`;
@@ -354,8 +354,9 @@ async function openResumeForm(id) {
   }
   window.__editingResumeId = id || null; // 记录当前编辑的简历
   box.innerHTML = `
-    <h4>${id ? '编辑简历' : '新建简历'}</h4>
+    <h4 class="form-section">${id ? '编辑简历' : '新建简历'}</h4>
     <form class="form" onsubmit="saveResumeForm(event)">
+      <h5 class="form-section">基本信息</h5>
       <div class="row">
         <div><label>简历名称</label><input type="text" id="rTitle" value="${esc(r && r.title)}" placeholder="如：前端开发简历"></div>
         <div><label>姓名</label><input type="text" id="rName" value="${esc(r && r.name)}" required></div>
@@ -370,6 +371,7 @@ async function openResumeForm(id) {
           </select>
         </div>
       </div>
+      <h5 class="form-section">求职意向</h5>
       <div class="row">
         <div><label>期望城市</label><input type="text" id="rCity" value="${esc(r && r.expected_city)}" placeholder="如：郑州"></div>
         <div><label>到岗时间</label><input type="text" id="rAvailable" value="${esc(r && r.available_time)}" placeholder="如：一周内 / 一个月内"></div>
@@ -386,8 +388,9 @@ async function openResumeForm(id) {
             <option value="hidden" ${r && r.visibility === 'hidden' ? 'selected' : ''}>隐藏</option>
           </select>
         </div>
-        <div><label>附件（PDF / Word）</label><input type="file" id="rFile" accept=".pdf,.doc,.docx"></div>
       </div>
+
+      <h5 class="form-section">技能与经历</h5>
       <label>技能标签</label>
       <input type="text" id="rSkills" value="${esc(r && r.skills)}" placeholder="逗号分隔，如：JavaScript,React,Vue">
       <label>工作经历</label>
@@ -396,8 +399,11 @@ async function openResumeForm(id) {
       <textarea id="rProject" placeholder="项目名称、职责、技术栈、成果">${esc(r && r.project_exp)}</textarea>
       <label>教育经历</label>
       <textarea id="rEduExp" placeholder="学校、专业、起止时间">${esc(r && r.edu_exp)}</textarea>
+      <h5 class="form-section">自我评价与附件</h5>
       <label>自我评价</label>
       <textarea id="rSelf" placeholder="优势、方向、期望">${esc(r && r.self_eval)}</textarea>
+      <label>附件（PDF / Word）</label>
+      <input type="file" id="rFile" accept=".pdf,.doc,.docx">
       ${r && r.attachment_name ? `<p class="match">当前附件：${fileLink(r.attachment_name, r.attachment_path)}（重新选择将替换）</p>` : ''}
       <p><button type="submit">${id ? '保存修改' : '创建简历'}</button>
         <button type="button" class="tiny ghost" onclick="document.getElementById('resumeEditor').innerHTML=''">取消</button></p>
@@ -552,16 +558,16 @@ async function searchJobs(page) {
         <option value="match" ${jobSort === 'match' ? 'selected' : ''}>匹配度优先</option>
       </select>
     </div>
-    <table class="grid">
-      <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>学历</th><th>经验</th><th>要求</th><th>操作</th></tr>
+    <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">学历</th><th scope="col">经验</th><th scope="col">要求</th><th scope="col">操作</th></tr></thead><tbody>
+      
       ${jobs.map((j) => `
         <tr>
-          <td><b style="cursor:pointer" onclick="openJobDetail(${j.id})">${esc(j.title)}</b>
+          <td><b onclick="openJobDetail(${j.id})">${esc(j.title)}</b>
               ${j.is_top ? badge('置顶', 'accepted') : ''}${j.is_urgent ? badge('急招', 'interview') : ''}
               <div class="match">${timeFmt(j.created_at)} · 浏览 ${j.view_count || 0}</div></td>
           <td>${esc(j.company || j.company_name)}</td>
           <td>${esc(j.location)}</td>
-          <td>${j.salary_min || 0}-${j.salary_max || '不限'}<div class="match">${jobTypeLabel(j.job_type)}</div></td>
+          <td class="num">${j.salary_min || 0}-${j.salary_max || '不限'}<div class="match">${jobTypeLabel(j.job_type)}</div></td>
           <td>${esc(j.education)}</td>
           <td>${esc(j.experience)}</td>
           <td class="match truncate" title="${esc(j.requirements)}">${esc(j.requirements)}</td>
@@ -570,7 +576,7 @@ async function searchJobs(page) {
                <button class="tiny ghost" onclick="toggleFavorite(${j.id})">收藏</button>`
             : '<span class="match">企业端</span>'}</td>
         </tr>`).join('')}
-    </table>
+    </tbody></table>
     <div class="pager">
       <button class="tiny ghost" ${d.page <= 1 ? 'disabled' : ''} onclick="searchJobs(${d.page - 1})">上一页</button>
       <span class="match">${d.page} / ${d.pages}</span>
@@ -633,20 +639,20 @@ function renderApplications() {
   const t = document.getElementById('appsTable');
   if (!rows.length) { t.innerHTML = '<div class="empty">没有符合条件的投递记录</div>'; return; }
   t.innerHTML = `
-    <table class="grid">
-      <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>匹配分</th><th>状态</th><th>投递时间</th><th>操作</th></tr>
+    <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">匹配分</th><th scope="col">状态</th><th scope="col">投递时间</th><th scope="col">操作</th></tr></thead><tbody>
+      
       ${rows.map((a) => `
         <tr>
           <td><b>${esc(a.job_title)}</b></td>
           <td>${esc(a.company_name)}</td>
           <td>${esc(a.location)}</td>
-          <td>${a.salary_min || 0}-${a.salary_max || '不限'}</td>
+          <td class="num">${a.salary_min || 0}-${a.salary_max || '不限'}</td>
           <td>${scoreCell(a.match_score)}</td>
           <td>${badge(statusLabel(a.status), a.status)}</td>
           <td>${timeFmt(a.created_at)}</td>
           <td><button class="tiny ghost" onclick="showEvents(${a.id})">轨迹</button></td>
         </tr>`).join('')}
-    </table>`;
+    </tbody></table>`;
 }
 
 // showEvents：查看投递轨迹（谁在什么时候看了/改了状态）
@@ -665,8 +671,8 @@ PANELS.interviews = async (p) => {
       <div class="card-head">我的面试</div>
       <div class="card-body">
         ${list.length ? `
-        <table class="grid">
-          <tr><th>职位</th><th>企业</th><th>面试时间</th><th>方式</th><th>状态</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">面试时间</th><th scope="col">方式</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${list.map((i) => `
             <tr>
               <td><b>${esc(i.job_title || '-')}</b></td>
@@ -681,7 +687,7 @@ PANELS.interviews = async (p) => {
                   <button class="tiny ghost" onclick="respondInterview(${i.id},'decline')">拒绝</button>` : '<span class="match">已处理</span>'}
               </td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">还没有面试邀约</div>'}
+        </tbody></table>` : '<div class="empty">还没有面试邀约</div>'}
       </div>
     </div>`;
 };
@@ -725,21 +731,21 @@ PANELS.favorites = async (p) => {
       <div class="card-head">我的收藏</div>
       <div class="card-body">
         ${list.length ? `
-        <table class="grid">
-          <tr><th>职位</th><th>企业</th><th>地点</th><th>薪资</th><th>收藏时间</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">收藏时间</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${list.map((j) => `
             <tr>
               <td><b>${esc(j.title)}</b></td>
               <td>${esc(j.company)}</td>
               <td>${esc(j.location)}</td>
-              <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+              <td class="num">${j.salary_min || 0}-${j.salary_max || '不限'}</td>
               <td>${timeFmt(j.created_at)}</td>
               <td>
                 <button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>
                 <button class="tiny ghost" onclick="toggleFavorite(${j.id})">取消收藏</button>
               </td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">还没有收藏职位，去「搜索职位」看看</div>'}
+        </tbody></table>` : '<div class="empty">还没有收藏职位，去「搜索职位」看看</div>'}
       </div>
     </div>`;
 };
@@ -780,16 +786,16 @@ function previewAttachment(name, path) {
   mask.className = 'chat-mask';
   mask.id = 'attachMask';
   mask.innerHTML = `
-    <div class="chat-box" style="width:820px;height:86vh">
+    <div class="chat-box modal-lg">
       <div class="chat-head"><b>${esc(name || '附件预览')}</b>
         <span>
           <a class="file" href="${url}" download>下载</a>
           <button class="tiny ghost" onclick="document.getElementById('attachMask').remove()">关闭</button>
         </span></div>
-      <div class="chat-body" style="padding:0;max-height:none;flex:1;background:#f0f0f0">
+      <div class="chat-body preview-body">
         ${isPdf
-          ? `<iframe src="${url}#toolbar=1" style="width:100%;height:100%;border:0"></iframe>`
-          : `<img src="${url}" style="max-width:100%;display:block;margin:0 auto">`}
+          ? `<iframe class="embed-frame" src="${url}#toolbar=1"></iframe>`
+          : `<img class="embed-img" src="${url}">`}
       </div>
     </div>`;
   document.body.appendChild(mask); // 挂载预览弹窗
@@ -889,8 +895,8 @@ PANELS.logs = async (p) => {
       <div class="card-head">操作日志（最近 200 条）</div>
       <div class="card-body">
         ${rows.length ? `
-        <table class="grid">
-          <tr><th>时间</th><th>用户</th><th>角色</th><th>方法</th><th>接口</th><th>状态码</th></tr>
+        <table class="grid"><thead><tr><th scope="col">时间</th><th scope="col">用户</th><th scope="col">角色</th><th scope="col">方法</th><th scope="col">接口</th><th scope="col">状态码</th></tr></thead><tbody>
+          
           ${rows.map((l) => `
             <tr>
               <td>${timeFmt(l.created_at)}</td>
@@ -900,7 +906,7 @@ PANELS.logs = async (p) => {
               <td class="match">${esc(l.path)}</td>
               <td>${l.status}</td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">暂无日志</div>'}
+        </tbody></table>` : '<div class="empty">暂无日志</div>'}
       </div>
     </div>`;
 };
@@ -989,8 +995,8 @@ async function searchTalent() {
   const t = document.getElementById('talentTable');
   if (!rows.length) { t.innerHTML = '<div class="empty">没有符合条件的公开简历</div>'; return; }
   t.innerHTML = `
-    <table class="grid">
-      <tr><th>姓名</th><th>技能</th><th>经验</th><th>学历</th><th>期望</th><th>状态</th><th>操作</th></tr>
+    <table class="grid"><thead><tr><th scope="col">姓名</th><th scope="col">技能</th><th scope="col">经验</th><th scope="col">学历</th><th scope="col">期望</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+      
       ${rows.map((r) => `
         <tr>
           <td><b>${esc(r.name)}</b></td>
@@ -1001,7 +1007,7 @@ async function searchTalent() {
           <td>${esc(jobStatusLabel(r.job_status))}</td>
           <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td>
         </tr>`).join('')}
-    </table>`;
+    </tbody></table>`;
 }
 
 // jobStatusLabel：求职状态文案
@@ -1014,20 +1020,20 @@ async function showRecommend(p) {
   if (user.role === 'company') {
     const rows = await api('/api/recommend/talent');
     return `<div class="card"><div class="card-head">为你推荐的候选人</div><div class="card-body">
-      ${rows.length ? `<table class="grid"><tr><th>姓名</th><th>技能</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
+      ${rows.length ? `<table class="grid"><thead><tr><th scope="col">姓名</th><th scope="col">技能</th><th scope="col">匹配分</th><th scope="col">理由</th><th scope="col">操作</th></tr></thead><tbody>
         ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="match truncate" title="${esc(r.skills)}">${esc(r.skills)}</td>
         <td>${scoreCell(r.match.score)}</td><td class="match">${esc(r.match.reasons)}</td>
-        <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td></tr>`).join('')}</table>`
+        <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">暂无推荐</div>'}
     </div></div>`;
   }
   const rows = await api('/api/recommend/jobs');
   return `<div class="card"><div class="card-head">为你推荐的职位</div><div class="card-body">
-    ${rows.length ? `<table class="grid"><tr><th>职位</th><th>企业</th><th>薪资</th><th>匹配分</th><th>理由</th><th>操作</th></tr>
+    ${rows.length ? `<table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">薪资</th><th scope="col">匹配分</th><th scope="col">理由</th><th scope="col">操作</th></tr></thead><tbody>
       ${rows.map((j) => `<tr><td><b>${esc(j.title)}</b></td><td>${esc(j.company)}</td>
       <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td><td>${scoreCell(j.match.score)}</td>
       <td class="match">${esc(j.match.reasons)}</td>
-      <td><button class="tiny" onclick="applyJob(${j.id}, this)">投递</button></td></tr>`).join('')}</table>`
+      <td><button class="tiny" onclick="applyJob(${j.id}, this)">投递</button></td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">完善简历后即可获得推荐</div>'}
   </div></div>`;
 }
@@ -1042,10 +1048,10 @@ async function openJobDetail(id) {
     mask.className = 'chat-mask';
     mask.id = 'jobDetailMask';
     mask.innerHTML = `
-      <div class="chat-box" style="width:640px">
+      <div class="chat-box modal-md">
         <div class="chat-head"><b>${esc(d.title)}</b>
           <button class="tiny ghost" onclick="document.getElementById('jobDetailMask').remove()">关闭</button></div>
-        <div class="chat-body" style="max-height:60vh">
+        <div class="chat-body detail-body">
           <p><b>薪资：</b>${d.salary_min || 0}-${d.salary_max || '不限'} 元/月　
              <b>地点：</b>${esc(d.location || '-')}　<b>学历：</b>${esc(d.education || '不限')}　
              <b>经验：</b>${esc(d.experience || '不限')}</p>
@@ -1181,7 +1187,6 @@ PANELS.contact = async (p) => {
   };
   const rows = [];
   if (d.received.length) {
-    rows.push('<tr><th>来自</th><th>角色</th><th>企业</th><th>操作</th></tr>');
     rows.push(d.received.map((r) => `
       <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
       <td>${esc(r.company_name || '-')}</td>
@@ -1204,8 +1209,16 @@ PANELS.contact = async (p) => {
       <div class="card-head">交换联系方式</div>
       <div class="card-body">
         <div id="contactMsg"></div>
-        ${d.received.length ? `<h4>待处理请求</h4><table class="grid">${rows.join('')}</table>` : '<p class="match">暂无待处理的请求。</p>'}
-        ${d.sent.length ? `<h4>已发送请求</h4><table class="grid"><tr><th>对方</th><th>角色</th><th>企业</th><th>状态 / 聊天</th></tr>${sentRows}</table>` : ''}
+        ${d.received.length ? `<h4 class="form-section">待处理请求</h4>
+        <table class="grid">
+          <thead><tr><th scope="col">来自</th><th scope="col">角色</th><th scope="col">企业</th><th scope="col">操作</th></tr></thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>` : '<p class="match">暂无待处理的请求。</p>'}
+        ${d.sent.length ? `<h4 class="form-section">已发送请求</h4>
+        <table class="grid">
+          <thead><tr><th scope="col">对方</th><th scope="col">角色</th><th scope="col">企业</th><th scope="col">状态 / 聊天</th></tr></thead>
+          <tbody>${sentRows}</tbody>
+        </table>` : ''}
       </div>
     </div>`;
 };
@@ -1236,10 +1249,10 @@ PANELS.notify = async (p) => {
         ${d.unread ? `<div class="list-bar"><span class="match">${d.unread} 条未读</span>
           <button class="tiny" onclick="readAllNotify()">全部已读</button></div>` : ''}
         ${list.length ? list.map((n) => `
-          <div class="msg ${n.is_read ? '' : 'unread'}" style="border-left:4px solid #000;margin-bottom:8px">
-            <b>${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息', account: '账号状态', resume: '简历动态', job: '职位动态', favorite: '收藏动态' }[n.type] || n.type}</b>
-            <span class="match"> · ${timeFmt(n.created_at)}</span>
-            <div>${esc(n.message)}</div>
+          <div class="notice ${n.is_read ? '' : 'unread'}">
+            <span class="n-type">${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息', account: '账号状态', resume: '简历动态', job: '职位动态', favorite: '收藏动态' }[n.type] || n.type}</span>
+            <span class="n-time">${timeFmt(n.created_at)}</span>
+            <div class="n-body">${esc(n.message)}</div>
           </div>`).join('') : '<div class="empty">暂无通知</div>'}
       </div>
     </div>`;
@@ -1266,13 +1279,15 @@ async function companyJobs(p) {
             <button class="tiny" onclick="toggleJobForm()">＋ 发布新职位</button>
           </span>
         </div>
-        <div class="card" id="jobForm" style="display:none;margin-top:12px">
+        <div class="card spaced" id="jobForm" style="display:none">
           <div class="card-head">填写职位信息</div>
           <div class="card-body">
             <form class="form" onsubmit="saveJob(event)">
               <label>职位标题</label><input type="text" id="jTitle" required>
               <label>职位要求（技能标签用逗号分隔）</label>
               <textarea id="jReq" placeholder="如：JavaScript,React,Vue,前端工程化"></textarea>
+
+              <h5 class="form-section">薪资与要求</h5>
               <div class="row">
                 <div><label>地点</label><input type="text" id="jLoc"></div>
                 <div><label>最低薪资</label><input type="number" id="jSalMin" min="0"></div>
@@ -1295,10 +1310,13 @@ async function companyJobs(p) {
                 </div>
                 <div><label>福利标签</label><input type="text" id="jBenefits" placeholder="如：五险一金,双休,弹性工作"></div>
               </div>
+              <h5 class="form-section">技能与发布</h5>
               <label>技能快选（点击追加到职位要求）</label>
               <div class="chips" id="skillChips"></div>
-              <p><button type="button" class="tiny ghost" onclick="fillJobTemplate()">套用职位模板</button></p>
-              <p><button type="submit" id="jobSubmit">发布职位</button></p>
+              <p class="toolbar">
+                <button type="button" class="tiny ghost" onclick="fillJobTemplate()">套用职位模板</button>
+                <button type="submit" id="jobSubmit">发布职位</button>
+              </p>
             </form>
           </div>
         </div>
@@ -1392,15 +1410,15 @@ function renderJobsTable(jobs) {
   const t = document.getElementById('jobsTable');
   if (!jobs.length) { t.innerHTML = '<div class="empty">还没有发布职位</div>'; return; }
   t.innerHTML = `
-    <table class="grid">
-      <tr><th>选择</th><th>职位</th><th>地点</th><th>薪资</th><th>投递数</th><th>状态</th><th>操作</th></tr>
+    <table class="grid"><thead><tr><th scope="col">选择</th><th scope="col">职位</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">投递数</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+      
       ${jobs.map((j) => `
         <tr>
           <td><input type="checkbox" class="jobPick" value="${j.id}"></td>
           <td><b>${esc(j.title)}</b>${j.is_top ? ' ' + badge('置顶', 'accepted') : ''}${j.is_urgent ? ' ' + badge('急招', 'interview') : ''}</td>
           <td>${esc(j.location)}</td>
-          <td>${j.salary_min || 0}-${j.salary_max || '不限'}</td>
-          <td>${j.apply_count || 0}</td>
+          <td class="num">${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+          <td class="num">${j.apply_count || 0}</td>
           <td>${badge({ offline: '已下架', published: '已发布' }[j.status] || j.status, j.status)}</td>
           <td>
             <button class="tiny" onclick="editJob(${j.id})">编辑</button>
@@ -1412,7 +1430,7 @@ function renderJobsTable(jobs) {
               : `<button class="tiny ghost" onclick="unpublishJob(${j.id})">下架</button>`}
           </td>
         </tr>`).join('')}
-    </table>`;
+    </tbody></table>`;
 }
 
 // republishJob：把已下架职位重新上架
@@ -1439,8 +1457,8 @@ PANELS.apps = async (p) => {
       <div class="card-body">
         <div id="appsMsg"></div>
         ${apps.length ? `
-        <table class="grid">
-          <tr><th>候选人</th><th>投递职位</th><th>简历附件</th><th>技能标签</th><th>经验</th><th>学历</th><th>匹配分</th><th>匹配理由</th><th>状态</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">候选人</th><th scope="col">投递职位</th><th scope="col">简历附件</th><th scope="col">技能标签</th><th scope="col">经验</th><th scope="col">学历</th><th scope="col">匹配分</th><th scope="col">匹配理由</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${apps.map((a) => `
             <tr>
               <td><b>${esc(a.candidate)}</b></td>
@@ -1465,7 +1483,7 @@ PANELS.apps = async (p) => {
                 <button class="tiny ghost" onclick="requestContact(${a.seeker_id})">交换联系方式</button>
               </td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">暂无收到的简历</div>'}
+        </tbody></table>` : '<div class="empty">暂无收到的简历</div>'}
       </div>
     </div>`;
 };
@@ -1493,8 +1511,8 @@ PANELS.companies = async (p) => {
       <div class="card-head">企业注册审核</div>
       <div class="card-body">
         ${list.length ? `
-        <table class="grid">
-          <tr><th>企业名称</th><th>联系人</th><th>用户名</th><th>电话</th><th>经营许可证</th><th>状态</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">企业名称</th><th scope="col">联系人</th><th scope="col">用户名</th><th scope="col">电话</th><th scope="col">经营许可证</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${list.map((c) => `
             <tr>
               <td><b>${esc(c.company_name)}</b></td>
@@ -1510,7 +1528,7 @@ PANELS.companies = async (p) => {
                 : `<button class="tiny ghost" onclick="toggleUserStatus(${c.id},'active')">启用</button>
                    <button class="tiny ghost" onclick="toggleUserStatus(${c.id},'banned')">停用</button>`}</td>
             </tr>`).join('')}
-        </table>` : '<div class="empty">暂无企业注册申请</div>'}
+        </tbody></table>` : '<div class="empty">暂无企业注册申请</div>'}
       </div>
     </div>`;
 };
@@ -1538,8 +1556,8 @@ PANELS.users = async (p) => {
     <div class="card">
       <div class="card-head">用户管理</div>
       <div class="card-body">
-        <table class="grid">
-          <tr><th>用户名</th><th>角色</th><th>姓名</th><th>企业</th><th>电话</th><th>状态</th><th>操作</th></tr>
+        <table class="grid"><thead><tr><th scope="col">用户名</th><th scope="col">角色</th><th scope="col">姓名</th><th scope="col">企业</th><th scope="col">电话</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+          
           ${list.map((u) => `
             <tr>
               <td><b>${esc(u.username)}</b></td>
@@ -1553,7 +1571,7 @@ PANELS.users = async (p) => {
                    <button class="tiny ghost" onclick="toggleUserStatus(${u.id},'banned')">停用</button>`
                 : '<span class="match">-</span>'}</td>
             </tr>`).join('')}
-        </table>
+        </tbody></table>
       </div>
     </div>`;
 };

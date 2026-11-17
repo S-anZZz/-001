@@ -74,6 +74,7 @@
   /* 布局宽度 */
   --wrap-max: 1120px;
   --header-h: 58px;
+  --nav-h: 44px;                       /* 仪表盘主导航高度，粘顶表头按此计算偏移 */
 }
 
 /* --------------------------------------------------------------------------
@@ -288,7 +289,6 @@ header .user-box {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
   margin-bottom: var(--sp-5);
-  overflow: hidden;                     /* 圆角裁切内部背景 */
 }
 
 .card > .card-head {
@@ -304,6 +304,7 @@ header .user-box {
   font-weight: 600;
   letter-spacing: .04em;
   min-height: 44px;
+  border-radius: calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0 0;  /* 标题块圆角 */
 }
 
 /* 标题前的方块标记，强化"黑白色块"的视觉节奏 */
@@ -346,6 +347,7 @@ header .user-box {
   background: var(--ink-050);
   color: var(--ink-900);
   border-bottom: 1px solid var(--line);
+  border-radius: calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0 0;
 }
 
 .card .card > .card-head::before { background: var(--ink-900); }
@@ -382,12 +384,29 @@ header .user-box {
   border-radius: var(--radius-sm);
 }
 
+/* 桌面端表格宽度有余量，放开溢出让表头能吸附在页面顶部。
+   窄屏表格在容器内横向滚动，此时粘顶会以容器为基准产生错位，故不启用。 */
+@media (min-width: 761px) {
+  .table-wrap { overflow: visible; }
+
+  table.grid thead th {
+    position: sticky;                  /* 滚动时表头吸附在导航下方 */
+    top: calc(var(--header-h) + var(--nav-h));
+    z-index: 4;
+    box-shadow: 0 1px 0 var(--line);   /* 与滚动内容之间加一条分隔线 */
+  }
+}
+
 table.grid {
   width: 100%;
   min-width: 680px;                    /* 保证列不被压扁 */
   border-collapse: collapse;
   background: var(--paper);
   font-size: var(--fs-base);
+}
+
+table.grid thead th {
+  background: var(--ink-050);           /* 表头用浅块，与黑标题块形成层级 */
 }
 
 table.grid th {
@@ -712,8 +731,12 @@ button:disabled,
 
 .msg.unread b::after { content: ' · 新'; font-size: var(--fs-xs); font-weight: 400; color: var(--ink-500); }
 
-/* 空态 */
+/* 空态：细线方框标记 + 文案，全站统一 */
 .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
   padding: var(--sp-8) var(--sp-4);
   color: var(--ink-400);
   text-align: center;
@@ -721,6 +744,13 @@ button:disabled,
   border: 1px dashed var(--line);
   border-radius: var(--radius-sm);
   background: var(--paper);
+}
+
+.empty::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--ink-300);
 }
 
 /* 技能标签 */
@@ -742,11 +772,77 @@ button:disabled,
 /* 次要说明文字 */
 .match { font-size: var(--fs-sm); color: var(--ink-500); }
 
+/* 通用小工具类：工具条 / 间距 / 提示 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin: var(--sp-4) 0 0;
+}
+
+.spaced { margin-top: var(--sp-4); }
+.hint { margin-top: var(--sp-3); }
+
+/* 表单小节标题：与卡片标题块保持同一方块标记语言 */
+.form-section {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-6) 0 var(--sp-3);
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  letter-spacing: .06em;
+  color: var(--ink-700);
+}
+
+.form-section::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  background: var(--ink-900);
+  flex: none;
+}
+
+form.form > .form-section:first-child { margin-top: 0; }
+
+/* 标题分级：h4 为区块主标题，h5 为表单内分节 */
+h4.form-section {
+  margin-top: var(--sp-6);
+  font-size: var(--fs-md);
+  font-weight: 650;
+  letter-spacing: .02em;
+  color: var(--ink-900);
+}
+
+h5.form-section { margin-top: var(--sp-5); }
+
+/* 通知条目：类型 + 时间 + 正文三段式 */
+.notice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 2px var(--sp-3);
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink-900);
+  border-radius: var(--radius-xs);
+  background: var(--paper);
+}
+
+.notice.unread { background: var(--ink-050); }
+.notice .n-type { font-size: var(--fs-sm); font-weight: 650; }
+.notice .n-time { font-size: var(--fs-xs); color: var(--ink-400); }
+.notice .n-body { grid-column: 1 / -1; color: var(--ink-700); line-height: 1.6; }
+
 /* --------------------------------------------------------------------------
    11. 页签导航
    -------------------------------------------------------------------------- */
-/* 通用分段控件（登录 / 注册） */
-.tabs {
+/* 通用分段控件（登录 / 注册）：类名与主导航区分，避免同名不同物 */
+.seg {
   display: inline-flex;
   gap: 0;
   margin-bottom: var(--sp-4);
@@ -756,7 +852,7 @@ button:disabled,
   background: var(--ink-050);
 }
 
-.tabs button {
+.seg button {
   height: 30px;
   padding: 0 var(--sp-4);
   border: 1px solid transparent;
@@ -767,9 +863,9 @@ button:disabled,
   font-weight: 600;
 }
 
-.tabs button:hover { background: rgba(255, 255, 255, .8); color: var(--ink-900); box-shadow: none; }
+.seg button:hover { background: rgba(255, 255, 255, .8); color: var(--ink-900); box-shadow: none; }
 
-.tabs button.active {
+.seg button.active {
   background: var(--ink-900);
   border-color: var(--ink-900);
   color: #fff;
@@ -777,7 +873,7 @@ button:disabled,
 }
 
 /* 仪表盘主导航：下划线式，粘在顶栏下方 */
-#dashTabs {
+.nav {
   position: sticky;
   top: var(--header-h);
   z-index: 30;
@@ -795,9 +891,9 @@ button:disabled,
   scrollbar-width: none;
 }
 
-#dashTabs::-webkit-scrollbar { display: none; }
+.nav::-webkit-scrollbar { display: none; }
 
-#dashTabs button {
+.nav button {
   height: 42px;
   padding: 0 var(--sp-4);
   border: none;
@@ -810,9 +906,9 @@ button:disabled,
   white-space: nowrap;
 }
 
-#dashTabs button:hover { background: var(--ink-050); color: var(--ink-900); box-shadow: none; }
+.nav button:hover { background: var(--ink-050); color: var(--ink-900); box-shadow: none; }
 
-#dashTabs button.active {
+.nav button.active {
   background: transparent;
   color: var(--ink-900);
   font-weight: 650;
@@ -955,6 +1051,22 @@ button:disabled,
 }
 
 .chat-head button:hover { background: #fff; color: var(--ink-900); border-color: #fff; }
+
+/* 弹窗尺寸：职位详情中等宽度，附件预览最宽 */
+.chat-box.modal-md { width: 640px; }
+.chat-box.modal-lg { width: 820px; height: 86vh; }
+
+.chat-body.detail-body { max-height: 60vh; }
+
+.chat-body.preview-body {
+  padding: 0;
+  max-height: none;
+  flex: 1;
+  background: var(--ink-050);
+}
+
+.embed-frame { width: 100%; height: 100%; border: 0; display: block; }
+.embed-img { max-width: 100%; display: block; margin: 0 auto; }
 
 .chat-body {
   flex: 1;
@@ -1256,24 +1368,24 @@ button:disabled,
 }
 
 /* 登录 / 注册分段控件：宽度贴合内容，不撑满整栏 */
-.auth-panel .tabs {
+.auth-panel .seg {
   align-self: flex-start;
   background: rgba(255, 255, 255, .07);
   border-color: rgba(255, 255, 255, .22);
 }
 
-.auth-panel .tabs button {
+.auth-panel .seg button {
   background: transparent;
   border-color: transparent;
   color: rgba(255, 255, 255, .76);
 }
 
-.auth-panel .tabs button:hover {
+.auth-panel .seg button:hover {
   background: rgba(255, 255, 255, .12);
   color: #fff;
 }
 
-.auth-panel .tabs button.active {
+.auth-panel .seg button.active {
   background: #fff;
   border-color: #fff;
   color: var(--ink-900);
@@ -1402,7 +1514,7 @@ a.file:hover { background: var(--ink-900); border-color: var(--ink-900); color: 
   header .brand small { display: none; }
   .wrap,
   .auth-wrap { padding: 0 var(--sp-4); }
-  #dashTabs { top: var(--header-h); }
+  .nav { top: var(--header-h); }
   .filters > div { min-width: 130px; }
   .row > div { min-width: 100%; }
   .stat-card b { font-size: var(--fs-lg); }
@@ -1434,7 +1546,7 @@ a.file:hover { background: var(--ink-900); border-color: var(--ink-900); color: 
   body::before,
   body::after { display: none; }
   header,
-  #dashTabs,
+  .nav,
   .filters,
   .pager { display: none !important; }
   .card { box-shadow: none; border-color: #999; }
