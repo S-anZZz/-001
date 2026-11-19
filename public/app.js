@@ -78,14 +78,24 @@ function scoreCell(score) {
 // login：登录处理，成功后进入工作台
 async function login(e) {
   e.preventDefault(); // 阻止表单默认提交
+  const submit = e.currentTarget.querySelector('[type="submit"]');
+  const label = submit.innerHTML;
+  submit.disabled = true;
+  submit.textContent = '正在登录…';
+  showMsg('');
   try {
     const d = await api('/api/login', {
       method: 'POST',
       body: JSON.stringify({ username: loginUser.value, password: loginPwd.value }) // 组装登录参数
     });
     token = d.token; user = d.user; // 仅在内存中保存令牌与用户
+    loginPwd.value = '';
     enterDashboard(); // 进入工作台
-  } catch (err) { showMsg(err.message, true); } // 错误提示
+  } catch (err) { showMsg(err.message, true); }
+  finally {
+    submit.disabled = false;
+    submit.innerHTML = label;
+  }
 }
 
 // forgotPassword：忘记密码（演示环境验证码直接返回）
@@ -164,9 +174,12 @@ async function register(e) {
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
   token = null; user = null; // 清空内存中的登录状态
-  document.getElementById('authWrap').style.display = 'block'; // 显示登录区（统一黑色面板）
-  document.getElementById('dashWrap').style.display = 'none'; // 隐藏工作台
-  document.getElementById('userBox').style.display = 'none'; // 隐藏用户信息
+  document.getElementById('authWrap').style.display = 'block';
+  document.getElementById('dashWrap').style.display = 'none';
+  document.getElementById('userBox').style.display = 'none';
+  document.getElementById('headerNote').style.display = '';
+  switchAuth('login');
+  window.scrollTo(0, 0);
 }
 
 // switchAuth：切换登录/注册页签
@@ -175,12 +188,21 @@ function switchAuth(mode) {
   document.getElementById('tabReg').classList.toggle('active', mode === 'register'); // 切换注册页签高亮
   document.getElementById('loginForm').style.display = mode === 'login' ? 'block' : 'none'; // 显示对应表单
   document.getElementById('regForm').style.display = mode === 'register' ? 'block' : 'none'; // 显示对应表单
+  document.getElementById('tabLogin').setAttribute('aria-pressed', String(mode === 'login'));
+  document.getElementById('tabReg').setAttribute('aria-pressed', String(mode === 'register'));
+  document.getElementById('authTitle').textContent = mode === 'login' ? '欢迎回来' : '开启新的可能';
+  document.getElementById('authSubtitle').textContent = mode === 'login' ? '登录 add work，继续你的职业旅程。' : '创建你的账号，让合适的人与机会相遇。';
+  document.title = `${mode === 'login' ? '登录' : '创建账号'} · add work`;
+  showMsg('');
 }
 
 function enterDashboard() {
   document.getElementById('authWrap').style.display = 'none'; // 隐藏登录区
   document.getElementById('dashWrap').style.display = 'block'; // 显示工作台
   document.getElementById('userBox').style.display = 'flex'; // 显示用户信息
+  document.getElementById('headerNote').style.display = 'none';
+  document.getElementById('workspaceLabel').textContent = { seeker: '个人工作空间', company: '企业招聘空间', admin: '平台管理空间' }[user.role];
+  document.getElementById('pageDate').textContent = new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(new Date());
   // 头像：有图显示图片，无图显示姓名首字占位
   const avatar = document.getElementById('userAvatar'); // 头像图片节点
   const initial = document.getElementById('userInitial'); // 首字占位节点
@@ -197,41 +219,75 @@ function enterDashboard() {
 
 const ROLE_TABS = {
   seeker: [
-    { id: 'home', name: '工作台' },
-    { id: 'resume', name: '我的简历' },
-    { id: 'jobs', name: '搜索职位' },
-    { id: 'applications', name: '投递记录' },
-    { id: 'contact', name: '联系方式' },
-    { id: 'notify', name: '通知' }
+    { id: 'home', name: '工作台', description: '每一步都有方向，每一份努力都值得被看见。' },
+    { id: 'jobs', name: '发现职位', description: '按照你的期待，找到值得奔赴的下一站。' },
+    { id: 'resume', name: '我的简历', description: '让经验与实力被看见，让好机会主动靠近。' },
+    { id: 'applications', name: '投递记录', description: '关注每一次投递，让求职进展清晰可见。' },
+    { id: 'interviews', name: '我的面试', description: '安排好下一次见面，为新的可能做好准备。' },
+    { id: 'favorites', name: '收藏职位', description: '留住心动的机会，认真做每一次选择。' },
+    { id: 'contact', name: '联系与沟通', description: '从一次真诚的沟通，开启一段新的职业旅程。' },
+    { id: 'notify', name: '消息通知', description: '重要的消息与进展，都在这里。' }
   ],
   company: [
-    { id: 'home', name: '工作台' },
-    { id: 'jobs', name: '职位管理' },
-    { id: 'apps', name: '收到的简历' },
-    { id: 'talent', name: '人才库' },
-    { id: 'profile', name: '企业资料' },
-    { id: 'contact', name: '联系方式' },
-    { id: 'notify', name: '通知' }
+    { id: 'home', name: '招聘工作台', description: '招聘进展一目了然，让合适的人更快加入。' },
+    { id: 'jobs', name: '职位管理', description: '维护招聘机会，让每一个好职位被看见。' },
+    { id: 'apps', name: '收到的简历', description: '发现候选人的闪光点，找到团队需要的人。' },
+    { id: 'talent', name: '发现人才', description: '主动寻找合适的人才，开启下一次合作。' },
+    { id: 'profile', name: '企业资料', description: '展示真实的团队，让人才更了解你们。' },
+    { id: 'contact', name: '联系与沟通', description: '保持沟通，让每一次相遇都有回音。' },
+    { id: 'notify', name: '消息通知', description: '及时了解招聘动态，不错过重要消息。' }
   ],
   admin: [
-    { id: 'home', name: '数据看板' },
-    { id: 'companies', name: '企业审核' },
-    { id: 'users', name: '用户管理' },
-    { id: 'logs', name: '操作日志' }
+    { id: 'home', name: '数据概览', description: '看见平台的每一点成长，掌握整体运营情况。' },
+    { id: 'companies', name: '企业审核', description: '认真审核每一份申请，建立可信赖的招聘环境。' },
+    { id: 'users', name: '用户管理', description: '管理平台账号，为求职与招聘提供良好秩序。' },
+    { id: 'logs', name: '操作日志', description: '记录关键操作，让平台管理有迹可循。' }
   ]
 };
+
+function uiIcon(name) {
+  const paths = {
+    home: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+    jobs: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12a20 20 0 0 0 18 0M12 12v4"/>',
+    resume: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9l-6-6Z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
+    applications: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M9 5V3h6v2M8 11h8M8 16h5"/>',
+    interviews: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 11h18M8 16h3"/>',
+    favorites: '<path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.6l6.2-.9L12 3Z"/>',
+    contact: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3H13a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 15h5"/>',
+    notify: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
+    talent: '<circle cx="10" cy="8" r="4"/><path d="M3 21v-2a7 7 0 0 1 10-6"/><circle cx="17" cy="17" r="3"/><path d="m19.5 19.5 2 2"/>',
+    profile: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M10 21v-6h4v6"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M17 5a3.5 3.5 0 0 1 0 7M18 15a5 5 0 0 1 4 5"/>',
+    companies: '<path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/>',
+    logs: '<path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3M8 8h5M8 13h3"/><circle cx="18" cy="6" r="4"/><path d="M18 4v2l1 1"/>'
+  };
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name === 'apps' ? 'resume' : name] || paths.home}</svg>`;
+}
 
 function renderTabs() {
   const tabs = document.getElementById('dashTabs');
   tabs.innerHTML = ROLE_TABS[user.role].map((t) =>
-    `<button data-t="${t.id}" onclick="openTab('${t.id}')">${t.name}</button>`).join('');
+    `<button data-t="${t.id}" onclick="openTab('${t.id}')">${uiIcon(t.id)}<span>${t.name}</span></button>`).join('');
 }
 
 async function openTab(id) {
-  document.querySelectorAll('#dashTabs button').forEach((b) =>
-    b.classList.toggle('active', b.dataset.t === id));
+  document.querySelectorAll('#dashTabs button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.t === id);
+    if (b.dataset.t === id) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
+  });
+  const nav = document.getElementById('dashTabs');
+  const active = nav.querySelector('[aria-current="page"]');
+  if (active && nav.scrollWidth > nav.clientWidth) {
+    nav.scrollTo({ left: active.offsetLeft - nav.offsetLeft - 12, behavior: 'instant' });
+  }
+  const tab = ROLE_TABS[user.role].find((t) => t.id === id) || ROLE_TABS[user.role][0];
+  document.getElementById('pageCrumb').textContent = tab.name;
+  document.getElementById('pageTitle').textContent = id === 'home' && user.role === 'seeker' ? `你好，${user.name || '朋友'}` : tab.name;
+  document.getElementById('pageDescription').textContent = tab.description;
+  document.title = `${tab.name} · add work`;
   const panel = document.getElementById('dashPanels');
-  panel.innerHTML = '<div class="card"><div class="empty">加载中…</div></div>';
+  panel.innerHTML = '<div class="card"><div class="empty" role="status">正在为你加载…</div></div>';
   const fn = PANELS[id] || PANELS.home;
   try { await fn(panel); } catch (err) {
     panel.innerHTML = `<div class="card"><div class="card-body"><div class="msg err">${esc(err.message)}</div></div></div>`;
@@ -246,7 +302,7 @@ PANELS.home = async (p) => {
       <div class="card">
         <div class="card-head">运营数据看板</div>
         <div class="card-body">
-          <div class="stat-grid">
+          <div class="stat-grid admin-stats">
             <div class="stat-card">用户总数<b>${d.users.total || 0}</b></div>
             <div class="stat-card">企业数<b>${d.users.company || 0}</b></div>
             <div class="stat-card">求职者数<b>${d.users.seeker || 0}</b></div>
@@ -270,10 +326,14 @@ PANELS.home = async (p) => {
   if (user.role === 'company') { // 企业首页展示招聘漏斗
     const d = await api('/api/company/dashboard');
     p.innerHTML = `
+      <section class="welcome-card">
+        <div><p class="welcome-kicker">BUILD SOMETHING GREAT</p><h2>好团队，从遇见对的人开始。</h2><p>发布一个好机会，发现一位新伙伴。让每一次招聘，都成为团队向前的一步。</p><div class="welcome-actions"><button onclick="openTab('jobs')">管理招聘职位 <span aria-hidden="true">↗</span></button><button class="ghost" onclick="openTab('talent')">发现合适人才</button></div></div>
+        <div class="welcome-art" aria-hidden="true">↗</div>
+      </section>
       <div class="card">
         <div class="card-head">招聘看板</div>
         <div class="card-body">
-          <div class="stat-grid">
+          <div class="stat-grid company-stats">
             <div class="stat-card">职位总数<b>${d.jobs.total || 0}</b></div>
             <div class="stat-card">在招职位<b>${d.jobs.published || 0}</b></div>
             <div class="stat-card">职位曝光<b>${d.jobs.views || 0}</b></div>
@@ -290,21 +350,23 @@ PANELS.home = async (p) => {
     return;
   }
   p.innerHTML = `
-    <div class="card">
-      <div class="card-head">工作台</div>
-      <div class="card-body">
-        <p>欢迎，<b>${esc(user.name)}</b>。当前角色：<b>${
-          { seeker: '求职者', company: '企业', admin: '管理员' }[user.role]}</b>。</p>
-        ${user.role === 'seeker' ? '<p class="match">提示：先完善简历，再搜索职位并投递，系统会按技能标签给出匹配分与匹配理由。</p>' : ''}
-        ${user.role === 'company' ? '<p class="match">提示：企业注册通过审核后即可登录；职位发布与修改无需管理员审核，提交后立即进入职位库。</p>' : ''}
-        ${user.role === 'admin' ? '<p class="match">提示：审核企业注册申请，管理用户账号。</p>' : ''}
-        ${user.role !== 'admin' ? '<div id="recommendBox" class="spaced"></div>' : ''}
+    <section class="welcome-card">
+      <div>
+        <p class="welcome-kicker">MAKE YOUR NEXT MOVE</p>
+        <h2>下一站，遇见更好的自己。</h2>
+        <p>完善你的简历，让合适的机会找到你。每一次认真出发，都离理想更近一步。</p>
+        <div class="welcome-actions"><button onclick="openTab('jobs')">发现好工作 <span aria-hidden="true">↗</span></button><button class="ghost" onclick="openTab('resume')">完善我的简历</button></div>
       </div>
-    </div>`;
-  if (user.role !== 'admin') {
-    const box = document.getElementById('recommendBox');
-    if (box) box.innerHTML = await showRecommend(p); // 异步填充推荐
-  }
+      <div class="welcome-art" aria-hidden="true">↗</div>
+    </section>
+    <div class="quick-links">
+      <button class="quick-link" onclick="openTab('applications')">${uiIcon('applications')}<span>投递记录<small>追踪每一份期待的进展</small></span><b aria-hidden="true">↗</b></button>
+      <button class="quick-link" onclick="openTab('interviews')">${uiIcon('interviews')}<span>我的面试<small>为下一次见面做好准备</small></span><b aria-hidden="true">↗</b></button>
+      <button class="quick-link" onclick="openTab('favorites')">${uiIcon('favorites')}<span>收藏职位<small>不错过每一个心动机会</small></span><b aria-hidden="true">↗</b></button>
+    </div>
+    <div id="recommendBox"></div>`;
+  const box = document.getElementById('recommendBox');
+  box.innerHTML = await showRecommend(p);
 };
 
 PANELS.resume = async (p) => {
@@ -1590,6 +1652,9 @@ function wrapTables(root) {
     if (t.parentElement && t.parentElement.classList.contains('table-wrap')) return; // 已包裹则跳过
     const box = document.createElement('div'); // 新建滚动容器
     box.className = 'table-wrap'; // 标记容器类名
+    box.tabIndex = 0;
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', '数据表格，可横向滚动查看');
     t.parentNode.insertBefore(box, t); // 先把容器插到表格原位置
     box.appendChild(t); // 再把表格移进容器
   });

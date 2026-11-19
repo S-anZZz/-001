@@ -6,3 +6,6 @@ uploads/
 _report/原报告备份.docx
 _report/__pycache__/
 ~$*
+tomcat-base/
+.DS_Store
+.mavis/

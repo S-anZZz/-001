@@ -165,7 +165,7 @@
 
 首次启动会自动建库、建表并写入演示数据（管理员、演示企业、演示求职者、演示职位）。
 
-## 启动
+## 启动（直接运行 Node）
 
 ```bash
 npm install
@@ -173,6 +173,23 @@ npm start
 ```
 
 启动后访问：http://localhost:3000
+
+## 本地 Tomcat 部署
+
+除了直接跑 Node，也支持 **Tomcat 作为统一入口**：Tomcat 托管前端页面，并把 `/api/*`、`/uploads/*`
+反向代理到本机 3000 端口的 Node 后端，浏览器只访问 **http://localhost:8080/**。
+
+```bash
+./tomcat/start.sh   # 启动 Node(3000) + Tomcat(8080)，带就绪自检
+./tomcat/stop.sh    # 停止
+```
+
+| 地址 | 说明 |
+| --- | --- |
+| http://localhost:8080/ | 应用首页（Tomcat 托管） |
+| http://localhost:8080/api/jobs | 接口经 Tomcat 反向代理到 Node |
+
+实现细节见 [tomcat/README.md](./tomcat/README.md)：自定义 `CATALINA_BASE`、代理 Servlet、端口与日志说明。
 
 ## 演示账号
 
