@@ -261,6 +261,40 @@ npm start
 | ≤ 760px | 筛选条件两列；表格禁止单元格折行、关闭粘顶表头；导航横向滚动 |
 | ≤ 520px | 顶栏隐藏副标题与用户名，仅留头像与退出 |
 
+## 课程报告与图件流水线
+
+三份 Word 报告（主报告 + 两份个人版）共用同一套 9 张正文插图：4 张黑白技术风示意图 + 5 张界面实拍截图。
+
+图件全部由 `_report/figs/` 下的脚本生成，**不依赖任何图形工具链**（本机没有 rsvg-convert / inkscape / cairosvg / ImageMagick），统一走 HTML/CSS → Edge headless → PNG：
+
+| 脚本 | 作用 |
+| --- | --- |
+| `render.py` | Edge headless + CDP 渲染器：按目标尺寸输出 PNG（示意图 1800px 宽，截图 1440×950 / 390×844） |
+| `fig-style.css` / `fig-connect.js` | 示意图共用的黑白技术风样式与「按实际布局计算连接线」的画线助手 |
+| `fig2-1-function.html` 等 4 个 | 功能结构图、招聘流程图、E-R 图、技术架构图（架构图含 Tomcat → Node → MySQL 链路） |
+| `replace_media.py` | 按图注定位，把 docx 内 `word/media/` 的图替换成新图；新图与原图像素尺寸一致，`wp:extent` 无需改动 |
+| `make_toc_field.py` | 把目录整理成 Word 动态 TOC 域（`TOC \o "1-2" \h \z \u`，dirty），页码由 Word 打开时自动更新 |
+| `preview_figs.py` | 生成「图件落位预览」页，用于核对图号、图题与所属章节是否对应 |
+
+重新生成流程：
+
+```bash
+# 1) 渲染图件（示意图 + 界面截图）
+cd _report/figs && ../.venv/bin/python render.py jobs-diagrams.json
+../.venv/bin/python render.py jobs-screens.json
+
+# 2) 重建主报告：先还原模板，再按 content.py 装配，最后整理目录域
+cp _report/原报告备份.docx "../《Java Web课程设计》报告.docx"
+../.venv/bin/python build_report.py
+../.venv/bin/python figs/make_toc_field.py "../《Java Web课程设计》报告.docx"
+
+# 3) 两份个人版：按图注替换图片，结构与分页保持不变
+../.venv/bin/python figs/replace_media.py "../《Java Web课程设计》报告_赵依帆版.docx" figs
+../.venv/bin/python figs/replace_media.py "../《Java Web课程设计》报告_周杰版.docx" figs
+```
+
+> 报告文档与 `_report/` 目录按本仓库约定不纳入版本控制（见 `.git/info/exclude`），仅作为本地产物保留。
+
 ## 目录结构
 
 ```

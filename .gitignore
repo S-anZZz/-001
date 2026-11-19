@@ -9,3 +9,7 @@ _report/__pycache__/
 tomcat-base/
 .DS_Store
 .mavis/
+_report/.venv/
+_report/figs/*.png
+_report/figs/*.pdf
+_report/*.bak
