@@ -2,6 +2,23 @@
 
 本项目的线上版本部署在 **Render（免费 Web 服务）+ TiDB Cloud（免费 MySQL）**，通过自定义域名 `addwork.us.ci` 对外访问。
 
+## 当前状态（已上线）
+
+| 项目 | 状态 |
+| --- | --- |
+| 访问地址 | **https://addwork.us.ci**（HTTP 自动 301 跳转到 HTTPS） |
+| 域名解析 | `addwork.us.ci` → CNAME `addwork.onrender.com` → `216.24.57.16 / .18`（Cloudflare） |
+| 证书 | `CN=addwork.us.ci`，签发者 Google Trust Services (WE1)，有效期至 2027-02-14 |
+| 应用托管 | Render 免费 Web 服务（Node 运行时，新加坡节点） |
+| 数据库 | TiDB Cloud Starter（MySQL 协议兼容，连接强制 TLS 1.2+） |
+| 自动部署 | 推送到 GitHub `main` 分支后 Render 自动构建并发布 |
+| 健康检查 | `GET /healthz` 返回数据库连通性与运行时长 |
+
+> 免费实例 15 分钟无流量会休眠，首次访问约需 1 分钟唤醒；冷启动后的第一次请求偶有超时，重试即可。
+
+**本地部署**：除公网版本外，也支持本地用 Tomcat 作为统一入口（Tomcat 托管前端 + 反向代理 `/api`、`/uploads` 到 Node 后端），
+执行 `./tomcat/start.sh` 后访问 http://localhost:8080/ ，详见 [tomcat/README.md](./tomcat/README.md)。
+
 > 为什么不用 Qoder Sites：Qoder Sites 的地址是「可改前缀 + 固定后缀」（如 `xxx.qoder.zone`），不提供自定义域名；且个人免费版只支持静态站点，无法运行 Node + MySQL 后端。本系统登录、投递、审核、匹配全部依赖数据库，因此改用支持常驻服务的 Render。
 
 ## 架构
