@@ -1,3 +1,20 @@
+/**
+ * app.js —— 前端单页应用的全部交互逻辑（原生 JS，无框架、无构建步骤）
+ *
+ * 组织结构：
+ *   1. 全局状态与工具函数：user、token、api()、esc()、timeFmt()、showMsg()；
+ *   2. 登录与注册：login()、register()、switchAuth()、logout()、init()；
+ *   3. 工作台框架：PANELS 面板注册表 + ROLE_TABS 角色页签 + openTab()；
+ *   4. 各业务面板：首页看板、简历、职位、投递、面试、收藏、联系、聊天、企业端、
+ *      管理端（企业审核、用户管理、操作日志）；
+ *   5. 通用弹窗：聊天窗口、职位详情、附件预览、简历打印预览。
+ *
+ * 关键约定：
+ *   - 所有请求统一走 api()，自动带上内存中的 token，并依赖 HttpOnly Cookie 维持会话；
+ *   - 所有拼接进 innerHTML 的用户数据都要经过 esc() 转义，避免 XSS；
+ *   - 页面不存 localStorage，刷新后通过 /api/me 恢复登录态。
+ */
+
 // user：当前登录用户对象
 let user = null;
 // token：登录令牌，只保存在内存中；持久化由服务端 HttpOnly Cookie 负责，避免 XSS 窃取
@@ -196,6 +213,7 @@ function switchAuth(mode) {
   showMsg('');
 }
 
+// enterDashboard：登录成功后隐藏登录区、展示工作台并渲染页签
 function enterDashboard() {
   document.getElementById('authWrap').style.display = 'none'; // 隐藏登录区
   document.getElementById('dashWrap').style.display = 'block'; // 显示工作台
@@ -245,6 +263,7 @@ const ROLE_TABS = {
   ]
 };
 
+// uiIcon：返回指定名称的内联 SVG 图标片段
 function uiIcon(name) {
   const paths = {
     home: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
@@ -264,12 +283,14 @@ function uiIcon(name) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name === 'apps' ? 'resume' : name] || paths.home}</svg>`;
 }
 
+// renderTabs：按当前角色渲染可用页签
 function renderTabs() {
   const tabs = document.getElementById('dashTabs');
   tabs.innerHTML = ROLE_TABS[user.role].map((t) =>
     `<button data-t="${t.id}" onclick="openTab('${t.id}')">${uiIcon(t.id)}<span>${t.name}</span></button>`).join('');
 }
 
+// openTab：切换页签并渲染对应面板内容
 async function openTab(id) {
   document.querySelectorAll('#dashTabs button').forEach((b) => {
     b.classList.toggle('active', b.dataset.t === id);
@@ -510,17 +531,20 @@ async function setDefaultResume(id) {
   catch (err) { alert(err.message); }
 }
 
+// deleteResume：删除指定简历（同时处理默认简历回退）
 async function deleteResume(id) {
   if (!confirm('确定删除这份简历吗？')) return;
   try { await api(`/api/resumes/${id}`, { method: 'DELETE' }); await openTab('resume'); }
   catch (err) { alert(err.message); }
 }
 
+// showResumeHistory：查看某份简历的修改历史
 async function showResumeHistory(id) {
   const rows = await api(`/api/resumes/${id}/history`);
   alert(rows.length ? '该简历共保存过 ' + rows.length + ' 个历史版本：\n' + rows.map((h) => timeFmt(h.created_at)).join('\n') : '暂无历史版本');
 }
 
+// saveResume：保存简历（无 id 为新建，有 id 为更新）
 async function saveResume(e) {
   e.preventDefault();
   let base64 = null, fname = null;
@@ -546,6 +570,7 @@ async function saveResume(e) {
   } catch (err) { document.getElementById('resumeMsg').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
 }
 
+// readFileAsBase64：读取文件为纯 base64（去掉 data URL 前缀）
 function readFileAsBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -555,6 +580,7 @@ function readFileAsBase64(file) {
   });
 }
 
+// seekerJobs：求职者端职位列表面板
 async function seekerJobs(p) {
   p.innerHTML = `
     <div class="card">
@@ -579,6 +605,7 @@ async function seekerJobs(p) {
   await searchJobs();
 };
 
+// searchJobs：按关键词 / 地点 / 薪资等条件搜索职位
 async function searchJobs(page) {
   jobPage = page || jobPage || 1; // 保持当前页
   const q = new URLSearchParams();
@@ -646,6 +673,7 @@ async function searchJobs(page) {
     </div>`;
 }
 
+// applyJob：投递职位并显示匹配分
 async function applyJob(id, btn) {
   btn.disabled = true;
   try {
@@ -921,6 +949,7 @@ async function toggleFavorite(jobId) {
   } catch (err) { alert(err.message); }
 }
 
+// statusLabel：把投递状态码翻译成中文文案
 function statusLabel(s) {
   return { submitted: '已投递', viewed: '已查看', interview: '面试中', accepted: '已录用', rejected: '未通过' }[s] || s;
 }
@@ -1285,6 +1314,7 @@ PANELS.contact = async (p) => {
     </div>`;
 };
 
+// respondContact：同意或拒绝对方的联系方式交换请求
 async function respondContact(id, accept, btn) {
   try {
     const d = await api(`/api/contact/requests/${id}/respond`, {
@@ -1327,6 +1357,7 @@ async function readAllNotify() {
     await openTab('notify'); // 刷新面板
   } catch (err) { alert(err.message); }
 }
+// companyJobs：企业端职位管理面板
 async function companyJobs(p) {
   const jobs = await api('/api/jobs/mine');
   p.innerHTML = `
@@ -1415,6 +1446,7 @@ function fillJobTemplate() {
   document.getElementById('jType').value = 'fulltime';
 }
 
+// toggleJobForm：展开或收起职位发布表单
 function toggleJobForm() {
   const box = document.getElementById('jobForm');
   box.style.display = box.style.display === 'none' ? 'block' : 'none';
@@ -1423,6 +1455,7 @@ function toggleJobForm() {
 
 let editingJobId = null;
 
+// saveJob：提交职位表单（新建或编辑）
 async function saveJob(e) {
   e.preventDefault();
   const body = {
@@ -1449,6 +1482,7 @@ async function saveJob(e) {
   } catch (err) { document.getElementById('jobMsg').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; }
 }
 
+// editJob：把职位数据填入表单进行编辑
 function editJob(id) {
   fetch('/api/jobs/mine', { headers: { 'Authorization': 'Bearer ' + token } })
     .then((r) => r.json()).then((d) => {
@@ -1468,6 +1502,7 @@ function editJob(id) {
     });
 }
 
+// renderJobsTable：渲染职位表格（含运营按钮与投递数）
 function renderJobsTable(jobs) {
   const t = document.getElementById('jobsTable');
   if (!jobs.length) { t.innerHTML = '<div class="empty">还没有发布职位</div>'; return; }
@@ -1503,6 +1538,7 @@ async function republishJob(id) {
   } catch (err) { alert(err.message); }
 }
 
+// unpublishJob：下架指定职位
 async function unpublishJob(id) {
   try {
     await api(`/api/jobs/${id}/unpublish`, { method: 'PATCH' });
@@ -1550,6 +1586,7 @@ PANELS.apps = async (p) => {
     </div>`;
 };
 
+// setAppStatus：修改投递状态（查看 / 面试 / 录用 / 不合适）
 async function setAppStatus(id, status) {
   try {
     await api(`/api/applications/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
@@ -1557,6 +1594,7 @@ async function setAppStatus(id, status) {
   } catch (err) { alert(err.message); }
 }
 
+// requestContact：向对方发起交换联系方式请求
 async function requestContact(toUserId) {
   try {
     const d = await api('/api/contact/request', {
@@ -1605,6 +1643,7 @@ async function rejectCompany(id) {
   } catch (err) { alert(err.message); }
 }
 
+// approveCompany：管理员通过企业注册审核
 async function approveCompany(id) {
   try {
     await api(`/api/admin/companies/${id}/approve`, { method: 'POST' });
@@ -1638,6 +1677,7 @@ PANELS.users = async (p) => {
     </div>`;
 };
 
+// toggleUserStatus：启用或停用用户账号
 async function toggleUserStatus(id, status) {
   try {
     await api(`/api/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });

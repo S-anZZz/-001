@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- index.html：页面骨架。只负责结构，所有交互逻辑在 app.js，样式在 style.css -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -10,7 +11,10 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <!-- 无障碍：键盘用户可直接跳到主内容 -->
   <a class="skip-link" href="#mainContent">跳到主要内容</a>
+
+  <!-- 顶部导航：品牌区 + 右侧账号信息（登录后由 app.js 填充） -->
   <header class="site-header">
     <a class="brand" href="/" aria-label="add work 首页">
       <span class="mark" aria-hidden="true">+</span>
@@ -28,6 +32,7 @@
     </div>
   </header>
 
+  <!-- 主内容区：登录页（authWrap）与工作台（dashWrap）二选一显示 -->
   <main id="mainContent">
     <div class="auth-wrap" id="authWrap">
       <div class="auth-shell">
@@ -101,7 +106,9 @@
       <footer class="auth-footer"><span>add work · 让工作与热爱相遇</span><span>简单一点，离理想更近一点。</span></footer>
     </div>
 
-    <div class="wrap" id="dashWrap" style="display:none">
+    <!-- 工作台区（登录后显示）：页签由 app.js 按角色渲染 -->
+  <!-- 工作台容器：页签按钮与内容面板都由 app.js 按角色渲染 -->
+  <div class="wrap" id="dashWrap" style="display:none">
       <aside class="sidebar">
         <div class="sidebar-label" id="workspaceLabel">个人工作空间</div>
         <nav class="nav" id="dashTabs" aria-label="工作台导航"></nav>
@@ -117,6 +124,7 @@
       </div>
     </div>
   </main>
-  <script src="/app.js"></script>
+  <!-- 页面逻辑：所有交互都在这里，defer 保证 DOM 就绪后再执行 -->
+  <script src="/app.js" defer></script>
 </body>
 </html>

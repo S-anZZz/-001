@@ -264,17 +264,55 @@ npm start
 ## 目录结构
 
 ```
-server.js     后端服务与 API 路由
-db.js         MySQL 连接、建库建表与种子数据
-storage.js    上传文件存储层（磁盘 / 数据库两种模式）
-match.js      匹配打分逻辑
-meeting.js    面试会议集成点（模拟实现）
-public/       前端页面（index.html / style.css / app.js）
-uploads/      本地开发时的附件与头像目录（不入仓库）
-render.yaml   Render 蓝图，一键创建免费 Web 服务
-DEPLOY.md     公网部署步骤（数据库、Render、域名解析、排错）
-.env.example  环境变量示例
+add work/
+├── server.js                 后端入口：HTTP 服务 + 全部 REST 接口
+├── db.js                     数据库层：连接池、建表、字段迁移、种子数据
+├── match.js                  匹配算法：技能 / 经验 / 学历 加权打分
+├── storage.js                文件存储层：磁盘与数据库两种模式
+├── meeting.js                线上面试集成桩：生成本地模拟会议链接
+├── package.json              依赖与 npm 脚本
+├── render.yaml               Render 蓝图（一键部署免费 Web 服务）
+├── README.md                 项目说明（本文件）
+├── DEPLOY.md                 公网部署步骤与排错
+├── AGENTS.md                 课程需求规格（功能清单与验收项）
+├── public/                   前端静态资源（由 Express 直接托管）
+│   ├── index.html            页面骨架：登录/注册 + 工作台容器
+│   ├── app.js                前端全部交互逻辑（单页应用，无框架）
+│   ├── style.css             黑白设计系统：变量、布局、表格、弹窗
+│   ├── terms.html            用户协议与隐私政策
+│   └── bg.webp               全局背景图（1920×1080，约 105KB）
+├── sql/
+│   └── db_objects.sql        视图 / 存储过程 / 存储函数 / 触发器脚本
+├── tomcat/                   本地 Tomcat 部署（前端托管 + 反向代理）
+│   ├── start.sh              一键启动 Node(3000) 与 Tomcat(8080)
+│   ├── stop.sh               停止两者
+│   └── README.md             部署原理、编译命令、验证清单
+├── tomcat-base/              本地 Tomcat 运行目录（不入库，脚本自动维护）
+├── uploads/                  本地开发附件目录（不入库，线上改用数据库存储）
+├── _report/                  课程报告生成脚本与素材（不入库）
+└── node_modules/             依赖（不入库）
 ```
+
+### 各文件职责
+
+| 文件 | 作用 | 关键内容 |
+| --- | --- | --- |
+| `server.js` | 后端唯一入口，启动时初始化数据库再监听端口 | 安全响应头（CSP / nosniff）、`send()` 统一响应、`wrap()` 错误兜底、Cookie 会话、`requireAuth()` 角色鉴权、上传鉴权、全站 API 路由、操作日志中间件 |
+| `db.js` | 数据源与结构演进 | MySQL 连接池、14+ 张表建表语句、`ensureColumn()` 增量加字段、种子账号（admin / techco / lilei）、索引与唯一约束 |
+| `match.js` | 简历与职位的匹配打分 | `splitTagEntries()` 解析标签、`normalizeTag()` 同义词归一、`matchScore()` 按技能 60 + 经验 20 + 学历 20 计分并给出匹配理由 |
+| `storage.js` | 上传文件读写抽象 | `putFile()/getFile()`、`MODE = disk / db` 两种实现，线上用数据库避免容器重启丢文件 |
+| `meeting.js` | 面试会议能力占位 | `createMeeting()` 按 provider 生成模拟链接，真实接入时替换为腾讯会议 / 飞书等开放平台 API |
+| `public/index.html` | 页面骨架 | 顶部品牌栏、登录/注册双表单、工作台页签容器、聊天与弹窗挂载点 |
+| `public/app.js` | 前端单页应用逻辑 | `api()` 请求封装、`PANELS` 页签注册表、各面板渲染函数、表单提交、聊天、附件预览、简历编辑器 |
+| `public/style.css` | 视觉样式 | 设计变量（`--ink/--line/--head`）、布局、卡片、表格、表单、弹窗、状态徽章、响应式 |
+| `public/terms.html` | 合规页面 | 信息采集范围、简历可见性、数据用途、用户权利说明 |
+| `public/bg.webp` | 全局背景 | 被 `style.css` 的 `body` 引用，配合半透明遮罩保证文字可读 |
+| `sql/db_objects.sql` | 数据库对象脚本 | 3 个统计视图、2 个存储过程、`fn_salary_text()` 与 6 参数 `fn_match_score()`、用户状态变更触发器 |
+| `tomcat/start.sh` / `stop.sh` | 本地 Tomcat 部署脚本 | 检测 MySQL、拉起 Node 后端、以自定义 `CATALINA_BASE` 启动 Tomcat 并轮询就绪 |
+| `tomcat/README.md` | Tomcat 部署说明 | 架构图、目录结构、编译反代 Servlet 的命令、验证清单 |
+| `render.yaml` | 云端部署蓝图 | 服务类型、构建与启动命令、环境变量（`DB_*`、`FILE_STORAGE=db`、`DB_SSL=true`） |
+
+> `package.json` 不支持注释，其脚本与环境变量说明统一写在本 README 与 `DEPLOY.md` 中。
 
 ## 推送到 GitHub
 

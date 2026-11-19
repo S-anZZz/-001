@@ -1,3 +1,30 @@
+/**
+ * server.js —— 后端入口文件
+ *
+ * 职责说明（按执行顺序）：
+ *   1. 加载依赖与环境变量，创建 Express 应用；
+ *   2. 注册全局中间件：请求体解析、安全响应头、操作日志；
+ *   3. 定义工具函数：统一响应 send()、错误兜底 wrap()、鉴权 requireAuth()；
+ *   4. 挂载全部 REST 路由：账号、简历、职位、投递、面试、消息、收藏、
+ *      企业资料与人才库、推荐、管理端统计与导出、文件上传与下载；
+ *   5. 启动时先初始化数据库（建表 + 种子数据），成功后再监听端口。
+ *
+ * 路由分组索引（搜索关键字即可定位）：
+ *   【账号】  /api/register /api/login /api/logout /api/me /api/auth/*
+ *   【简历】  /api/resumes*            —— 多份简历、默认简历、开放度、历史
+ *   【职位】  /api/jobs*               —— 发布/编辑/上下架/刷新/置顶/急招/详情/相似
+ *   【投递】  /api/jobs/:id/apply /api/applications*
+ *   【面试】  /api/interviews*         —— 邀约、确认、改约、拒绝
+ *   【消息】  /api/messages* /api/messages/threads
+ *   【收藏关注】 /api/favorites* /api/follows*
+ *   【联系】  /api/contact/requests*
+ *   【企业】  /api/company/* /api/talent /api/recommend/talent
+ *   【推荐】  /api/recommend/jobs /api/jobs/:id/similar
+ *   【管理】  /api/admin/*             —— 看板、日志、企业审核、用户状态、CSV 导出
+ *   【文件】  POST /api/files/* 上传，GET /uploads/:file 下载（需登录）
+ *   【运维】  GET /healthz             —— 健康检查（数据库连通性 + 运行时长）
+ */
+
 const express = require('express');
 const path = require('path');
 const { pool, init, hashPassword, verifyPassword, needsRehash, newToken } = require('./db');
@@ -125,6 +152,7 @@ function requireAuth(roles) {
   });
 }
 
+// notify：写入一条站内通知（面试、审核、投递状态等统一走这里）
 async function notify(userId, type, message) {
   await pool.query('INSERT INTO notifications (user_id, type, message) VALUES (?,?,?)', [userId, type, message]);
 }
@@ -186,6 +214,7 @@ function saveLicense(name, base64) {
   return saveBase64(name, base64, LICENSE_EXT, MAX_DOC, '经营许可证', 'license-');
 }
 
+// POST /api/register：注册（求职者直接可用，企业需管理员审核）
 app.post('/api/register', wrap(async (req, res) => {
   // 解析注册参数：用户名、密码、角色、姓名、企业名、电话、头像、经营许可证
   const { username, password, role, name, companyName, phone, avatarName, avatarBase64, licenseName, licenseBase64 } = req.body || {};
@@ -250,6 +279,7 @@ const loginFails = new Map();
 const LOGIN_WINDOW = 5 * 60 * 1000; // 统计窗口 5 分钟
 const LOGIN_MAX = 5; // 允许的最大失败次数
 
+// POST /api/login：登录，校验密码后创建会话并下发 Cookie
 app.post('/api/login', wrap(async (req, res) => {
   // 登录接口：校验用户名密码并签发登录令牌
   const { username, password } = req.body || {}; // 解析登录参数
@@ -287,6 +317,7 @@ app.post('/api/login', wrap(async (req, res) => {
   send(res, true, { user: safe, token }); // 返回用户信息与令牌
 }));
 
+// POST /api/logout：退出登录，删除当前会话记录
 app.post('/api/logout', requireAuth(), wrap(async (req, res) => {
   const header = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); // 取请求头令牌
   const token = header || parseCookies(req).sid || ''; // 或取 Cookie 令牌
@@ -295,6 +326,7 @@ app.post('/api/logout', requireAuth(), wrap(async (req, res) => {
   send(res, true, null); // 返回成功
 }));
 
+// GET /api/me：返回当前登录用户信息（前端刷新后恢复登录态）
 app.get('/api/me', requireAuth(), wrap(async (req, res) => {
   const { password, token, token_expires_at, ...safe } = req.user; // 去掉敏感字段
   send(res, true, safe); // 返回当前用户信息
@@ -377,6 +409,7 @@ app.get('/api/jobs', wrap(async (req, res) => {
   send(res, true, { list: rows, total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) }); // 返回列表与分页信息
 }));
 
+// GET /api/jobs/mine：企业查询自己发布的全部职位
 app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM jobs WHERE company_id = ? ORDER BY id DESC LIMIT 200', [req.user.id]); // 查询该企业的职位（上限 200 条）
   send(res, true, rows); // 返回职位列表
@@ -395,6 +428,7 @@ app.get('/api/jobs/:id', wrap(async (req, res) => {
   send(res, true, rows[0]); // 返回详情
 }));
 
+// POST /api/jobs：企业发布职位（含敏感词校验与类型/福利字段）
 app.post('/api/jobs', requireAuth(['company']), wrap(async (req, res) => {
   const { title, requirements, location, salaryMin, salaryMax, education, experience,
     jobType, benefits } = req.body || {}; // 解析职位参数
@@ -651,6 +685,7 @@ app.post('/api/messages', requireAuth(), limitBy('message', 30, 60 * 1000), wrap
   send(res, true, rows[0]); // 返回新消息
 }));
 
+// POST /api/contact/requests/:id/respond：对方同意或拒绝交换联系方式
 app.post('/api/contact/requests/:id/respond', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT * FROM contact_requests WHERE id = ?', [req.params.id]); // 查询请求
   const reqRow = rows[0]; // 取请求
@@ -1253,6 +1288,7 @@ function hasBannedWord(text) {
 
 // 简单内存限频：同一 key 在窗口期内最多 N 次
 const rateBuckets = new Map();
+// rateLimit：滑动窗口限频计数，返回本次是否放行
 function rateLimit(key, max, windowMs) {
   const now = Date.now();
   const rec = rateBuckets.get(key);
