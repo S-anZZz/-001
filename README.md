@@ -225,17 +225,17 @@ npm test
 ## 本地 Tomcat 部署
 
 除了直接跑 Node，也支持 **Tomcat 作为统一入口**：Tomcat 托管前端页面，并把 `/api/*`、`/uploads/*`
-反向代理到本机 3000 端口的 Node 后端，浏览器只访问 **http://localhost:8080/**。
+反向代理到本机 3000 端口的 Node 后端，浏览器只访问 **http://localhost:8081/**。
 
 ```bash
-./tomcat/start.sh   # 启动 Node(3000) + Tomcat(8080)，带就绪自检
+./tomcat/start.sh   # 启动 Node(3000) + Tomcat(8081)，带就绪自检
 ./tomcat/stop.sh    # 停止
 ```
 
 | 地址 | 说明 |
 | --- | --- |
-| http://localhost:8080/ | 应用首页（Tomcat 托管） |
-| http://localhost:8080/api/jobs | 接口经 Tomcat 反向代理到 Node |
+| http://localhost:8081/ | 应用首页（Tomcat 托管） |
+| http://localhost:8081/api/jobs | 接口经 Tomcat 反向代理到 Node |
 
 实现细节见 [tomcat/README.md](./tomcat/README.md)：自定义 `CATALINA_BASE`、代理 Servlet、端口与日志说明。
 
@@ -366,7 +366,7 @@ add work/
 ├── sql/
 │   └── db_objects.sql        视图 / 存储过程 / 存储函数 / 触发器脚本
 ├── tomcat/                   本地 Tomcat 部署（前端托管 + 反向代理）
-│   ├── start.sh              一键启动 Node(3000) 与 Tomcat(8080)
+│   ├── start.sh              一键启动 Node(3000) 与 Tomcat(8081)
 │   ├── stop.sh               停止两者
 │   └── README.md             部署原理、编译命令、验证清单
 ├── tomcat-base/              本地 Tomcat 运行目录（不入库，脚本自动维护）

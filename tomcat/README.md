@@ -2,10 +2,10 @@
 
 本项目前端是静态页面、后端是 Node 服务，因此本地用 **Tomcat 作为统一入口**：
 Tomcat 负责托管前端页面，并把 `/api/*`、`/uploads/*` 反向代理到本机 3000 端口的 Node 后端。
-浏览器只需要访问 **http://localhost:8080/**，前端代码无需改动任何接口地址。
+浏览器只需要访问 **http://localhost:8081/**，前端代码无需改动任何接口地址。
 
 ```
-浏览器 ──> Tomcat :8080 ──┬─ 静态资源（index.html / app.js / style.css / bg.webp）
+浏览器 ──> Tomcat :8081 ──┬─ 静态资源（index.html / app.js / style.css / bg.webp）
                           └─ /api/*、/uploads/*  ──代理──> Node :3000 ──> MySQL :3306
 ```
 
@@ -50,7 +50,7 @@ tomcat-base/            自定义 CATALINA_BASE（不入库，首次运行自动
 5. 启动：
 
    ```bash
-   ./tomcat/start.sh     # 启动 Node(3000) + Tomcat(8080) 并自检
+   ./tomcat/start.sh     # 启动 Node(3000) + Tomcat(8081) 并自检
    ./tomcat/stop.sh      # 停止
    ```
 
@@ -58,9 +58,9 @@ tomcat-base/            自定义 CATALINA_BASE（不入库，首次运行自动
 
 | 检查 | 地址 |
 | --- | --- |
-| 首页 | http://localhost:8080/ |
-| 静态资源 | http://localhost:8080/style.css 、/app.js 、/bg.webp |
-| 接口代理 | http://localhost:8080/api/jobs |
+| 首页 | http://localhost:8081/ |
+| 静态资源 | http://localhost:8081/style.css 、/app.js 、/bg.webp |
+| 接口代理 | http://localhost:8081/api/jobs |
 | 登录（含 Cookie） | 页面登录后台验证 |
 
 ## 说明
