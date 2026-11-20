@@ -127,6 +127,8 @@ async function init() {
       match_score INT,
       match_reasons TEXT,
       meeting_link VARCHAR(255),
+      apply_count INT NOT NULL DEFAULT 1,
+      deleted TINYINT NOT NULL DEFAULT 0,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       KEY idx_app_resume (resume_id),
@@ -162,7 +164,7 @@ async function init() {
       KEY idx_session_user (user_id)
     )`);
 
-  // sms_codes 表：注册与找回密码的手机验证码（演示环境不下发短信，接口直接返回）
+  // 保留历史验证码表，但未接入真实验证通道前不允许签发或消费验证码。
   await pool.query(`
     CREATE TABLE IF NOT EXISTS sms_codes (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -241,6 +243,8 @@ async function init() {
       seeker_id INT NOT NULL,
       company_id INT NOT NULL,
       scheduled_at DATETIME,
+      proposed_at DATETIME,
+      company_note VARCHAR(255),
       mode VARCHAR(16) NOT NULL DEFAULT 'online',
       link VARCHAR(255),
       status VARCHAR(16) NOT NULL DEFAULT 'pending',
@@ -351,12 +355,21 @@ async function init() {
     ['refreshed_at', "ADD COLUMN refreshed_at DATETIME"],
   ]) await ensureColumn('jobs', col, ddl); // 职位表补齐
 
+  // 投递表补齐：重复投递次数与企业端软删除标记
+  for (const [col, ddl] of [
+    ['apply_count', "ADD COLUMN apply_count INT NOT NULL DEFAULT 1"],
+    ['deleted', "ADD COLUMN deleted TINYINT NOT NULL DEFAULT 0"],
+  ]) await ensureColumn('applications', col, ddl); // 投递表补齐
+
+  await ensureColumn('interviews', 'proposed_at', 'ADD COLUMN proposed_at DATETIME');
+  await ensureColumn('interviews', 'company_note', 'ADD COLUMN company_note VARCHAR(255)');
+
   // 兼容旧库：令牌过期时间
   await ensureColumn('users', 'token_expires_at', "ADD COLUMN token_expires_at DATETIME");
   // 兼容旧库：通知已读标记
   await ensureColumn('notifications', 'is_read', "ADD COLUMN is_read TINYINT NOT NULL DEFAULT 0");
   // 投递唯一索引：同一个求职者对同一职位只能投递一次（数据库层兜底，防并发重复）
-  await ensureUniqueApplyIndex();
+  await ensureUniqueApplyIndex(); // (seeker_id, job_id) 唯一索引：重复投递在原记录上累加次数
 
   await seed(); // 写入演示数据
 }
@@ -395,19 +408,19 @@ function needsRehash(stored) {
   return !!stored && !String(stored).startsWith('scrypt$');
 }
 
-// ensureUniqueApplyIndex：为 applications 建立 (seeker_id, job_id) 唯一索引
-// 历史数据可能存在重复投递，先清理重复只保留最早一条，再建索引
+// ensureUniqueApplyIndex：确保 applications 上存在 (seeker_id, job_id) 唯一索引
+// 重复投递不新增行，而是在原记录上累加 apply_count，因此唯一索引可以保留并用于并发保护
 async function ensureUniqueApplyIndex() {
   const [idx] = await pool.query(
     `SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.STATISTICS
      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'applications' AND INDEX_NAME = 'uk_app_seeker_job'`
-  ); // 查询索引是否已存在
-  if (idx[0].c) return; // 已存在则跳过
+  ); // 查询索引是否存在
+  if (idx[0].c) return; // 已存在直接返回
   await pool.query(
     `DELETE a FROM applications a JOIN applications b
      ON a.seeker_id = b.seeker_id AND a.job_id = b.job_id AND a.id > b.id`
-  ); // 清理重复投递，保留 id 最小的一条
-  await pool.query('ALTER TABLE applications ADD UNIQUE KEY uk_app_seeker_job (seeker_id, job_id)'); // 建立唯一索引
+  ); // 先清理历史重复，保留最早一条
+  await pool.query('ALTER TABLE applications ADD UNIQUE KEY uk_app_seeker_job (seeker_id, job_id)'); // 建唯一索引
 }
 
 // newToken：生成随机登录令牌，用于登录态校验

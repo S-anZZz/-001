@@ -465,3 +465,26 @@ a.file:hover { background: var(--ink-050); border-color: var(--ink-300); }
   .table-wrap { overflow: visible; }
   table.grid { min-width: 0; }
 }
+
+/* ---------- 聊天：左侧联系人 + 右侧会话 ---------- */
+.chat-layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; min-height: 460px; }
+.chat-side { border-right: 1px solid var(--line); padding-right: 12px; display: flex; flex-direction: column; gap: 8px; }
+.chat-side-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.chat-item { display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 52px; padding: 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-700); text-align: left; white-space: normal; cursor: pointer; }
+.chat-item:hover { background: var(--head); color: var(--head-ink); }
+.chat-item.active { border-color: var(--ink); background: var(--head); color: var(--head-ink); }
+.chat-avatar { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; border: 1px solid currentColor; font-size: 13px; }
+.chat-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-meta b { display: block; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-meta .match { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-unread { margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; display: grid; place-items: center; background: var(--ink); color: #fff; font-size: 11px; }
+.chat-main { min-width: 0; }
+.chat-pane { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.chat-pane-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.chat-history { flex: 1; overflow-y: auto; max-height: 360px; padding: 6px 2px; }
+.chat-pane-foot { display: flex; gap: 8px; align-items: flex-end; }
+.chat-pane-foot textarea { flex: 1; }
+.stat-card.link { cursor: pointer; text-align: left; font: inherit; }
+.stat-card.link:hover { border-color: var(--ink); }
+.seg .count { display: inline-block; margin-left: 4px; font-size: 11px; opacity: .7; }
+.danger { color: #a12a2a; border-color: #a12a2a; }

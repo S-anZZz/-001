@@ -115,21 +115,6 @@ async function login(e) {
   }
 }
 
-// forgotPassword：忘记密码（演示环境验证码直接返回）
-async function forgotPassword() {
-  const username = prompt('请输入要找回的用户名');
-  if (!username) return;
-  try {
-    const d = await api('/api/auth/forgot', { method: 'POST', body: JSON.stringify({ username }) });
-    const code = prompt(`验证码已发送至 ${d.phone}（演示环境：${d.code}）\n请输入验证码`);
-    if (!code) return;
-    const pwd = prompt('请输入新密码（4~8 位）');
-    if (!pwd) return;
-    const r = await api('/api/auth/reset', { method: 'POST', body: JSON.stringify({ username, code, newPassword: pwd }) });
-    showMsg(r, false); // 提示成功
-  } catch (err) { showMsg(err.message, true); }
-}
-
 // toggleCompanyFields：选择角色后显示或隐藏企业专属字段
 function toggleCompanyFields() {
   const isCompany = document.getElementById('regRole').value === 'company'; // 是否选择了企业
@@ -191,6 +176,7 @@ async function register(e) {
 async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
   token = null; user = null; // 清空内存中的登录状态
+  closeChat(); // 退出时关闭会话并阻止在途响应写入
   document.getElementById('authWrap').style.display = 'block';
   document.getElementById('dashWrap').style.display = 'none';
   document.getElementById('userBox').style.display = 'none';
@@ -243,22 +229,24 @@ const ROLE_TABS = {
     { id: 'applications', name: '投递记录', description: '关注每一次投递，让求职进展清晰可见。' },
     { id: 'interviews', name: '我的面试', description: '安排好下一次见面，为新的可能做好准备。' },
     { id: 'favorites', name: '收藏职位', description: '留住心动的机会，认真做每一次选择。' },
-    { id: 'contact', name: '联系与沟通', description: '从一次真诚的沟通，开启一段新的职业旅程。' },
+    { id: 'chat', name: '聊天', description: '与合适的人保持沟通，历史会话随时可查。' },
     { id: 'notify', name: '消息通知', description: '重要的消息与进展，都在这里。' }
   ],
   company: [
     { id: 'home', name: '招聘工作台', description: '招聘进展一目了然，让合适的人更快加入。' },
     { id: 'jobs', name: '职位管理', description: '维护招聘机会，让每一个好职位被看见。' },
     { id: 'apps', name: '收到的简历', description: '发现候选人的闪光点，找到团队需要的人。' },
+    { id: 'interviews', name: '面试管理', description: '跟进面试安排，及时处理候选人的改约申请。' },
     { id: 'talent', name: '发现人才', description: '主动寻找合适的人才，开启下一次合作。' },
     { id: 'profile', name: '企业资料', description: '展示真实的团队，让人才更了解你们。' },
-    { id: 'contact', name: '联系与沟通', description: '保持沟通，让每一次相遇都有回音。' },
+    { id: 'chat', name: '聊天', description: '和候选人保持沟通，历史会话随时可查。' },
     { id: 'notify', name: '消息通知', description: '及时了解招聘动态，不错过重要消息。' }
   ],
   admin: [
     { id: 'home', name: '数据概览', description: '看见平台的每一点成长，掌握整体运营情况。' },
     { id: 'companies', name: '企业审核', description: '认真审核每一份申请，建立可信赖的招聘环境。' },
     { id: 'users', name: '用户管理', description: '管理平台账号，为求职与招聘提供良好秩序。' },
+    { id: 'adminJobs', name: '职位管理', description: '维护职位状态，处理违规或过期职位。' },
     { id: 'logs', name: '操作日志', description: '记录关键操作，让平台管理有迹可循。' }
   ]
 };
@@ -272,7 +260,9 @@ function uiIcon(name) {
     applications: '<rect x="4" y="5" width="16" height="16" rx="2"/><path d="M9 5V3h6v2M8 11h8M8 16h5"/>',
     interviews: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 11h18M8 16h3"/>',
     favorites: '<path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L3 9.6l6.2-.9L12 3Z"/>',
+    chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3H13a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 15h5"/>',
     contact: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 9 9 0 0 1-4-.9L3 21l1.9-5.5a9 9 0 0 1-.9-4A8.5 8.5 0 0 1 12.5 3H13a8.5 8.5 0 0 1 8 8v.5Z"/><path d="M8 11h8M8 15h5"/>',
+    adminJobs: '<rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12a20 20 0 0 0 18 0M12 12v4"/>',
     notify: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',
     talent: '<circle cx="10" cy="8" r="4"/><path d="M3 21v-2a7 7 0 0 1 10-6"/><circle cx="17" cy="17" r="3"/><path d="m19.5 19.5 2 2"/>',
     profile: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M10 21v-6h4v6"/>',
@@ -324,16 +314,16 @@ PANELS.home = async (p) => {
         <div class="card-head">运营数据看板</div>
         <div class="card-body">
           <div class="stat-grid admin-stats">
-            <div class="stat-card">用户总数<b>${d.users.total || 0}</b></div>
-            <div class="stat-card">企业数<b>${d.users.company || 0}</b></div>
-            <div class="stat-card">求职者数<b>${d.users.seeker || 0}</b></div>
-            <div class="stat-card">职位总数<b>${d.jobs.total || 0}</b></div>
-            <div class="stat-card">在招职位<b>${d.jobs.published || 0}</b></div>
-            <div class="stat-card">急招职位<b>${d.jobs.urgent || 0}</b></div>
-            <div class="stat-card">投递总量<b>${d.apps.total || 0}</b></div>
-            <div class="stat-card">面试中<b>${d.apps.interview || 0}</b></div>
-            <div class="stat-card">已录用<b>${d.apps.accepted || 0}</b></div>
-            <div class="stat-card">近 7 天投递<b>${d.recentApplications || 0}</b></div>
+            <button class="stat-card link" onclick="openTab('users')">用户总数<b>${d.users.total || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('companies')">企业数<b>${d.users.company || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('users')">求职者数<b>${d.users.seeker || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">职位总数<b>${d.jobs.total || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">在招职位<b>${d.jobs.published || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">急招职位<b>${d.jobs.urgent || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">投递总量<b>${d.apps.total || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">面试中<b>${d.apps.interview || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('adminJobs')">已录用<b>${d.apps.accepted || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('logs')">近 7 天投递<b>${d.recentApplications || 0}</b></button>
           </div>
           <p class="toolbar">
             <button class="tiny" onclick="exportCsv('applications')">导出投递 CSV</button>
@@ -631,6 +621,13 @@ async function searchJobs(page) {
     document.getElementById('jobsTable').innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 请求失败提示
     return;
   }
+  let appliedMap = {}; // 已投递次数：job_id -> 次数
+  if (user && user.role === 'seeker') {
+    try {
+      const mine = await api('/api/applications/mine'); // 拉取我的投递
+      mine.forEach((a) => { appliedMap[a.job_id] = Number(a.apply_count) || 1; }); // 建立映射
+    } catch (e) { appliedMap = {}; } // 失败不影响列表
+  }
   const t = document.getElementById('jobsTable');
   const jobs = d.list || [];
   if (!jobs.length) {
@@ -661,7 +658,8 @@ async function searchJobs(page) {
           <td>${esc(j.experience)}</td>
           <td class="match truncate" title="${esc(j.requirements)}">${esc(j.requirements)}</td>
           <td>${user.role === 'seeker'
-            ? `<button class="tiny" onclick="applyJob(${j.id}, this)">投递</button>
+            ? `${appliedMap[j.id] ? `<div class="match">已投 ${appliedMap[j.id]} 次</div>` : ''}
+               <button class="tiny ${appliedMap[j.id] ? 'ghost' : ''}" onclick="applyJob(${j.id}, this)">${appliedMap[j.id] ? '再投一次' : '投递'}</button>
                <button class="tiny ghost" onclick="toggleFavorite(${j.id})">收藏</button>`
             : '<span class="match">企业端</span>'}</td>
         </tr>`).join('')}
@@ -675,14 +673,17 @@ async function searchJobs(page) {
 
 // applyJob：投递职位并显示匹配分
 async function applyJob(id, btn) {
-  btn.disabled = true;
+  btn.disabled = true; // 防连点
   try {
-    const d = await api(`/api/jobs/${id}/apply`, { method: 'POST' });
-    btn.textContent = `已投递（${d.score}分）`;
+    const d = await api(`/api/jobs/${id}/apply`, { method: 'POST' }); // 投递（重复投递会累计次数）
+    const times = Number(d.applyCount) || 1; // 已投递次数
+    btn.textContent = times > 1 ? `已投 ${times} 次 · 再投一次` : `已投递（${d.score}分）· 可再投`;
+    btn.classList.add('ghost'); // 视觉上退为次要按钮，仍可继续点击
   } catch (err) {
-    btn.disabled = false;
-    btn.textContent = '投递';
-    alert(err.message);
+    btn.textContent = '投递'; // 失败恢复
+    alert(err.message); // 提示原因
+  } finally {
+    btn.disabled = false; // 允许重复投递
   }
 }
 PANELS.applications = async (p) => {
@@ -729,7 +730,7 @@ function renderApplications() {
   const t = document.getElementById('appsTable');
   if (!rows.length) { t.innerHTML = '<div class="empty">没有符合条件的投递记录</div>'; return; }
   t.innerHTML = `
-    <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">匹配分</th><th scope="col">状态</th><th scope="col">投递时间</th><th scope="col">操作</th></tr></thead><tbody>
+    <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">匹配分</th><th scope="col">投递次数</th><th scope="col">状态</th><th scope="col">投递时间</th><th scope="col">操作</th></tr></thead><tbody>
       
       ${rows.map((a) => `
         <tr>
@@ -738,6 +739,7 @@ function renderApplications() {
           <td>${esc(a.location)}</td>
           <td class="num">${a.salary_min || 0}-${a.salary_max || '不限'}</td>
           <td>${scoreCell(a.match_score)}</td>
+          <td class="num">${Number(a.apply_count) || 1}</td>
           <td>${badge(statusLabel(a.status), a.status)}</td>
           <td>${timeFmt(a.created_at)}</td>
           <td><button class="tiny ghost" onclick="showEvents(${a.id})">轨迹</button></td>
@@ -755,26 +757,32 @@ async function showEvents(id) {
 }
 
 PANELS.interviews = async (p) => {
-  const list = await api('/api/interviews/mine'); // 我的面试邀约
+  const isCompany = user.role === 'company';
+  const list = await api('/api/interviews/mine'); // 按角色返回面试记录
   p.innerHTML = `
     <div class="card">
-      <div class="card-head">我的面试</div>
+      <div class="card-head">${isCompany ? '面试管理' : '我的面试'}</div>
       <div class="card-body">
         ${list.length ? `
-        <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">面试时间</th><th scope="col">方式</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
-          
+        <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">${isCompany ? '候选人' : '企业'}</th><th scope="col">面试时间 / 改约前时间</th><th scope="col">拟议时间</th><th scope="col">方式</th><th scope="col">备注</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
           ${list.map((i) => `
             <tr>
               <td><b>${esc(i.job_title || '-')}</b></td>
-              <td>${esc(i.company || '-')}</td>
-              <td>${timeFmt(i.scheduled_at)}</td>
-              <td>${i.mode === 'offline' ? '线下' : `线上 ${i.link ? `<a class="file" href="${esc(i.link)}" target="_blank" rel="noopener">入会</a>` : ''}`}</td>
+              <td>${esc((isCompany ? i.candidate : i.company) || '-')}</td>
+              <td>${esc(timeFmt(i.scheduled_at))}</td>
+              <td>${esc(timeFmt(i.proposed_at) || '-')}</td>
+              <td>${i.mode === 'offline' ? '线下' : `线上 ${/^https?:\/\//i.test(i.link || '') ? `<a class="file" href="${esc(i.link)}" target="_blank" rel="noopener">入会</a>` : ''}`}</td>
+              <td><div>候选人：${esc(i.seeker_note || '-')}</div><div>企业：${esc(i.company_note || '-')}</div></td>
               <td>${badge(interviewLabel(i.status), interviewTone(i.status))}</td>
               <td>
-                ${['pending', 'rescheduled'].includes(i.status) ? `
-                  <button class="tiny" onclick="respondInterview(${i.id},'confirm')">确认</button>
-                  <button class="tiny ghost" onclick="rescheduleInterview(${i.id})">改约</button>
-                  <button class="tiny ghost" onclick="respondInterview(${i.id},'decline')">拒绝</button>` : '<span class="match">已处理</span>'}
+                ${isCompany
+                  ? (i.status === 'rescheduled' ? `
+                    <button class="tiny" onclick="reviewInterview(${Number(i.id)},'accept')">接受改约</button>
+                    <button class="tiny ghost" onclick="reviewInterview(${Number(i.id)},'reject')">拒绝改约</button>` : '<span class="match">无待处理改约</span>')
+                  : `${i.status === 'pending' ? `<button class="tiny" onclick="respondInterview(${Number(i.id)},'confirm')">确认</button>` : ''}
+                    ${['pending', 'confirmed'].includes(i.status) ? `<button class="tiny ghost" onclick="rescheduleInterview(${Number(i.id)})">改约</button>` : ''}
+                    ${['pending', 'confirmed', 'rescheduled'].includes(i.status) ? `<button class="tiny ghost" onclick="respondInterview(${Number(i.id)},'decline')">拒绝</button>` : '<span class="match">已处理</span>'}`}
+                ${i.application_id ? `<button class="tiny ghost" onclick="showEvents(${Number(i.application_id)})">历史</button>` : ''}
               </td>
             </tr>`).join('')}
         </tbody></table>` : '<div class="empty">还没有面试邀约</div>'}
@@ -784,7 +792,7 @@ PANELS.interviews = async (p) => {
 
 // interviewLabel：面试状态文案
 function interviewLabel(s) {
-  return { pending: '待确认', confirmed: '已确认', declined: '已拒绝', rescheduled: '申请改约' }[s] || s;
+  return { pending: '待确认', confirmed: '已确认', declined: '已拒绝', rescheduled: '改约待企业确认' }[s] || s;
 }
 
 // interviewTone：面试状态对应的徽标色调（映射到 CSS 的 data-s）
@@ -794,22 +802,46 @@ function interviewTone(s) {
 
 // respondInterview：确认或拒绝面试
 async function respondInterview(id, action) {
-  const note = action === 'decline' ? (prompt('请填写拒绝原因（可留空）') || '') : '';
+  const note = action === 'decline' ? prompt('请填写拒绝原因（可留空）') : '';
+  if (note === null) return;
   try {
     await api(`/api/interviews/${id}/respond`, { method: 'POST', body: JSON.stringify({ action, note }) });
     await openTab('interviews');
   } catch (err) { alert(err.message); }
 }
 
-// rescheduleInterview：申请改约时间
+// futureInterviewTime：校验本地面试时间并统一提交 ISO 时间
+function futureInterviewTime(value) {
+  const text = String(value).trim().replace('T', ' ');
+  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(text)) throw new Error('请输入有效时间，格式 YYYY-MM-DD HH:mm');
+  const date = new Date(text.replace(' ', 'T'));
+  if (!Number.isFinite(date.getTime()) || timeFmt(date) !== text) throw new Error('请输入有效的日期和时间');
+  if (date.getTime() <= Date.now()) throw new Error('面试时间必须晚于当前时间');
+  return date.toISOString();
+}
+
+// rescheduleInterview：提交拟议时间，等待企业审核后才生效
 async function rescheduleInterview(id) {
-  const t = prompt('请输入希望改约的时间，格式 2026-11-20 15:00');
+  const t = prompt('请输入希望改约的本地时间，格式 YYYY-MM-DD HH:mm（需企业确认）');
   if (!t) return;
   try {
+    const newTime = futureInterviewTime(t);
+    const note = prompt('请填写改约备注（可留空）');
+    if (note === null) return;
     await api(`/api/interviews/${id}/respond`, {
       method: 'POST',
-      body: JSON.stringify({ action: 'reschedule', newTime: t.replace(' ', 'T'), note: '候选人申请改约' })
+      body: JSON.stringify({ action: 'reschedule', newTime, note })
     });
+    await openTab('interviews');
+  } catch (err) { alert(err.message); }
+}
+
+// reviewInterview：企业接受或拒绝候选人的改约申请
+async function reviewInterview(id, action) {
+  const note = prompt(action === 'accept' ? '接受改约后将按拟议时间面试，请填写备注（可留空）' : '拒绝改约后保留原时间并等待候选人确认，请填写备注（可留空）');
+  if (note === null) return;
+  try {
+    await api(`/api/interviews/${id}/review`, { method: 'POST', body: JSON.stringify({ action, note }) });
     await openTab('interviews');
   } catch (err) { alert(err.message); }
 }
@@ -842,13 +874,14 @@ PANELS.favorites = async (p) => {
 
 // askInterview：企业发起面试邀约（填写时间与方式）
 async function askInterview(id) {
-  const t = prompt('请输入面试时间，格式 2026-11-20 15:00');
+  const t = prompt('请输入面试本地时间，格式 YYYY-MM-DD HH:mm');
   if (!t) return; // 取消则不发起
-  const online = confirm('点击“确定”为线上面试，点“取消”为线下面试');
   try {
+    const scheduledAt = futureInterviewTime(t);
+    const online = confirm('点击“确定”为线上面试，点“取消”为线下面试');
     await api(`/api/applications/${id}/interview`, {
       method: 'POST',
-      body: JSON.stringify({ scheduledAt: t.trim().replace(' ', 'T'), mode: online ? 'online' : 'offline' })
+      body: JSON.stringify({ scheduledAt, mode: online ? 'online' : 'offline' })
     });
     alert('面试邀约已发送，等待候选人确认');
     await openTab('apps');
@@ -863,15 +896,30 @@ async function toggleFollow(companyId) {
   } catch (err) { alert(err.message); }
 }
 
-// previewAttachment：企业端预览候选人附件（PDF/图片可内嵌，Word 提示下载）
-function previewAttachment(name, path) {
-  const url = '/uploads/' + encodeURIComponent(path);
+let receivedAttachments = new Map(); // 按投递 ID 保存附件元数据，不将文件名拼入事件代码
+
+// previewApplicationAttachment：企业附件访问统一经过投递接口记录轨迹
+function previewApplicationAttachment(appId) {
+  appId = Number(appId);
+  if (!Number.isSafeInteger(appId) || appId <= 0) return;
+  const attachment = receivedAttachments.get(appId);
+  if (!attachment || !attachment.attachment_path || attachment.attachment_exists === false) return alert('附件不存在或已失效');
+  previewAttachment(attachment.attachment_name, attachment.attachment_path, `/api/applications/${appId}/attachment`);
+}
+
+// previewAttachment：仅允许内部投递附件 URL；个人附件仍使用原 /uploads 地址
+function previewAttachment(name, path, applicationUrl) {
+  if (applicationUrl && !/^\/api\/applications\/[1-9]\d*\/attachment$/.test(applicationUrl)) return;
+  const url = applicationUrl || '/uploads/' + encodeURIComponent(path);
+  const downloadUrl = applicationUrl ? url + '?download=1' : url;
   const isPdf = /\.pdf$/i.test(path);
   const isImg = /\.(png|jpe?g|gif|webp)$/i.test(path);
   if (!isPdf && !isImg) { // Word 等格式无法在线预览
-    if (confirm('该文件格式不支持在线预览，是否下载？')) window.open(url, '_blank');
+    if (confirm('该文件格式不支持在线预览，是否下载？')) window.open(downloadUrl, '_blank', 'noopener');
     return;
   }
+  const old = document.getElementById('attachMask');
+  if (old) old.remove();
   const mask = document.createElement('div');
   mask.className = 'chat-mask';
   mask.id = 'attachMask';
@@ -879,13 +927,13 @@ function previewAttachment(name, path) {
     <div class="chat-box modal-lg">
       <div class="chat-head"><b>${esc(name || '附件预览')}</b>
         <span>
-          <a class="file" href="${url}" download>下载</a>
+          <a class="file" href="${esc(downloadUrl)}" download>下载</a>
           <button class="tiny ghost" onclick="document.getElementById('attachMask').remove()">关闭</button>
         </span></div>
       <div class="chat-body preview-body">
         ${isPdf
-          ? `<iframe class="embed-frame" src="${url}#toolbar=1"></iframe>`
-          : `<img class="embed-img" src="${url}">`}
+          ? `<iframe class="embed-frame" src="${esc(url)}#toolbar=1"></iframe>`
+          : `<img class="embed-img" src="${esc(url)}" alt="附件预览">`}
       </div>
     </div>`;
   document.body.appendChild(mask); // 挂载预览弹窗
@@ -1096,7 +1144,7 @@ async function searchTalent() {
           <td>${esc(r.education)}</td>
           <td>${esc(r.expected_city || '-')} ${r.expected_salary_min || '-'}-${r.expected_salary_max || '-'}</td>
           <td>${esc(jobStatusLabel(r.job_status))}</td>
-          <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td>
+          <td><button class="tiny" data-peer-id="${Number(r.user_id)}" data-peer-name="${esc(r.name)}" onclick="openChat(Number(this.dataset.peerId), this.dataset.peerName, contactText())">主动沟通</button></td>
         </tr>`).join('')}
     </tbody></table>`;
 }
@@ -1114,7 +1162,7 @@ async function showRecommend(p) {
       ${rows.length ? `<table class="grid"><thead><tr><th scope="col">姓名</th><th scope="col">技能</th><th scope="col">匹配分</th><th scope="col">理由</th><th scope="col">操作</th></tr></thead><tbody>
         ${rows.map((r) => `<tr><td><b>${esc(r.name)}</b></td><td class="match truncate" title="${esc(r.skills)}">${esc(r.skills)}</td>
         <td>${scoreCell(r.match.score)}</td><td class="match">${esc(r.match.reasons)}</td>
-        <td><button class="tiny" onclick="openChat(${r.user_id}, '${esc(r.name)}', contactText())">主动沟通</button></td></tr>`).join('')}</tbody></table>`
+        <td><button class="tiny" data-peer-id="${Number(r.user_id)}" data-peer-name="${esc(r.name)}" onclick="openChat(Number(this.dataset.peerId), this.dataset.peerName, contactText())">主动沟通</button></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">暂无推荐</div>'}
     </div></div>`;
   }
@@ -1135,6 +1183,7 @@ async function openJobDetail(id) {
   try {
     const d = await api(`/api/jobs/${id}`); // 职位详情
     const sim = await api(`/api/jobs/${id}/similar`).catch(() => []); // 相似职位（失败不阻塞）
+    document.getElementById('jobDetailMask')?.remove();
     const mask = document.createElement('div');
     mask.className = 'chat-mask';
     mask.id = 'jobDetailMask';
@@ -1157,15 +1206,21 @@ async function openJobDetail(id) {
           <button onclick="applyJob(${d.id}, this)">投递该职位</button>
           <button class="tiny ghost" onclick="toggleFavorite(${d.id})">收藏</button>
           <button class="tiny ghost" onclick="toggleFollow(${d.company_id})">关注企业</button>
+          ${user?.role === 'seeker' ? `<button class="tiny ghost" onclick="requestContact(${Number(d.company_id)})">交换联系方式</button>` : ''}
         </div>
+        <div id="jobContactMsg"></div>
       </div>`;
     document.body.appendChild(mask); // 挂载弹窗
   } catch (err) { alert(err.message); }
 }
 
 // ---------------------------------------------------------------- 站内聊天
-// chatPeerId：当前会话的对方用户主键
-let chatPeerId = null;
+// chatSession：隔离会话窗口、分页游标及异步请求，避免旧响应写入新会话
+let chatSession = null;
+
+function isCurrentChat(session) {
+  return session && chatSession === session && session.mask.isConnected && user && Number(user.id) === session.userId;
+}
 
 // 组装企业联系方式文本，供“发布联系方式”时预填
 function contactText() {
@@ -1177,18 +1232,21 @@ function contactText() {
 
 // openChat：打开与某人的聊天窗口（peerName 仅用于标题，prefill 为预填内容）
 async function openChat(peerId, peerName, prefill) {
-  if (!peerId) return; // 参数保护
-  chatPeerId = Number(peerId); // 记住当前会话对象
-  const old = document.getElementById('chatMask');
-  if (old) old.remove(); // 关闭已有窗口，避免叠加
+  peerId = Number(peerId);
+  if (!user || !Number.isSafeInteger(peerId) || peerId <= 0) return;
+  closeChat(); // 关闭旧窗口，同时使旧请求失效
   const mask = document.createElement('div');
   mask.className = 'chat-mask';
   mask.id = 'chatMask';
   mask.innerHTML = `
     <div class="chat-box">
       <div class="chat-head">
-        <b>与 ${esc(peerName || '对方')} 的会话</b>
+        <b id="chatTitle">与 ${esc(peerName || '对方')} 的会话</b>
         <button class="tiny ghost" onclick="closeChat()">关闭</button>
+      </div>
+      <div class="chat-quick">
+        <button class="tiny ghost" id="chatEarlier" onclick="loadChat(true)" style="display:none">加载更早</button>
+        <button class="tiny ghost" id="chatRefresh" onclick="loadChat()">刷新最新消息 / 回执</button>
       </div>
       <div class="chat-body" id="chatBody"><p class="match">加载中…</p></div>
       <div class="chat-quick">
@@ -1198,19 +1256,20 @@ async function openChat(peerId, peerName, prefill) {
         <button class="tiny ghost" onclick="quickReply('职位详情已发您，方便的话请回复是否感兴趣。')">发职位</button>
       </div>
       <div class="chat-foot">
-        <textarea id="chatInput" rows="3" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-        <button onclick="sendChat()">发送</button>
+        <textarea id="chatInput" rows="3" maxlength="500" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="chatSend" onclick="sendChat()">发送</button>
       </div>
       <div id="chatMsg"></div>
     </div>`;
+  chatSession = { peerId, userId: Number(user.id), mask, messages: [], hasMore: false, nextBefore: null, request: 0, loading: false, sending: false };
   document.body.appendChild(mask); // 挂到页面上
-  if (prefill) document.getElementById('chatInput').value = prefill; // 预填联系方式
-  await loadChat(); // 拉取历史消息
-  const input = document.getElementById('chatInput');
-  input.focus(); // 自动聚焦输入框
+  const input = mask.querySelector('#chatInput');
+  if (prefill) input.value = prefill;
+  input.focus();
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } // 回车发送
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendChat(); }
   });
+  await loadChat(); // 默认只请求最新 50 条
 }
 
 // quickReply：快捷回复模板，填入输入框
@@ -1221,122 +1280,249 @@ function quickReply(text) {
   input.focus(); // 聚焦便于直接发送
 }
 
-// closeChat：关闭聊天窗口
+// closeChat：关闭聊天窗口并使在途请求失效
 function closeChat() {
+  chatSession = null;
   const mask = document.getElementById('chatMask');
-  if (mask) mask.remove(); // 从页面移除
-  chatPeerId = null; // 清空会话对象
+  if (mask) mask.remove();
 }
 
-// loadChat：拉取并渲染当前会话的消息
-async function loadChat() {
-  const box = document.getElementById('chatBody');
-  if (!box) return;
+// loadChat：刷新最新一页或按游标加载更早消息，回执仅取服务端返回值
+async function loadChat(earlier = false) {
+  const session = chatSession;
+  if (!isCurrentChat(session) || (earlier && (session.loading || !session.hasMore || !session.nextBefore))) return;
+  const request = ++session.request;
+  const box = session.mask.querySelector('#chatBody');
+  const tip = session.mask.querySelector('#chatMsg');
+  const more = session.mask.querySelector('#chatEarlier');
+  const refresh = session.mask.querySelector('#chatRefresh');
+  session.loading = true;
+  more.disabled = refresh.disabled = true;
+  tip.innerHTML = '';
+  const query = new URLSearchParams({ limit: '50' });
+  if (earlier) query.set('before', String(session.nextBefore));
   try {
-    const d = await api('/api/messages/' + chatPeerId); // 请求会话记录
-    const msgs = d.messages || [];
-    if (!msgs.length) {
-      box.innerHTML = '<div class="empty">还没有消息，发出第一条联系方式吧</div>'; // 空会话提示
-      return;
-    }
-    box.innerHTML = msgs.map((m) => `
-      <div class="chat-line ${m.from_user_id === user.id ? 'me' : 'peer'}">
+    const d = await api(`/api/messages/${session.peerId}?${query}`);
+    if (!isCurrentChat(session) || request !== session.request) return;
+    const scrollTop = box.scrollTop, scrollHeight = box.scrollHeight;
+    const rows = earlier ? [...(d.messages || []), ...session.messages] : (d.messages || []);
+    session.messages = [...new Map(rows.map((m) => [Number(m.id), m])).values()].sort((a, b) => Number(a.id) - Number(b.id));
+    session.nextBefore = Number(d.nextBefore) || null;
+    session.hasMore = Boolean(d.hasMore) && Number.isSafeInteger(session.nextBefore) && session.nextBefore > 0;
+    if (d.peer) session.mask.querySelector('#chatTitle').textContent = `与 ${d.peer.company_name || d.peer.name || '对方'} 的会话`;
+    box.innerHTML = session.messages.length ? session.messages.map((m) => `
+      <div class="chat-line ${Number(m.from_user_id) === session.userId ? 'me' : 'peer'}">
         <div class="chat-bubble">${esc(m.content).replace(/\n/g, '<br>')}</div>
-        <div class="chat-time">${esc(String(m.created_at || '').replace('T', ' ').slice(0, 16))}</div>
-      </div>`).join(''); // 自己的消息靠右、对方靠左
-    box.scrollTop = box.scrollHeight; // 滚动到最新一条
+        <div class="chat-time">${esc(timeFmt(m.created_at))}${Number(m.from_user_id) === session.userId ? ' · ' + (Number(m.is_read) === 1 ? '已读' : '未读') : ''}</div>
+      </div>`).join('') : '<div class="empty">还没有消息，发出第一条消息吧</div>';
+    box.scrollTop = earlier ? scrollTop + box.scrollHeight - scrollHeight : box.scrollHeight;
   } catch (err) {
-    box.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 加载失败提示
+    if (!isCurrentChat(session) || request !== session.request) return;
+    if (!session.messages.length) box.innerHTML = '<div class="empty">未能加载消息，请点击刷新重试</div>';
+    tip.innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+  } finally {
+    if (isCurrentChat(session) && request === session.request) {
+      session.loading = false;
+      more.style.display = session.hasMore ? '' : 'none';
+      more.disabled = refresh.disabled = false;
+    }
   }
 }
 
-// sendChat：发送当前输入框里的消息
+// sendChat：固定接收方，发送完成后仅更新发起发送的会话窗口
 async function sendChat() {
-  const input = document.getElementById('chatInput');
-  const tip = document.getElementById('chatMsg');
-  const content = input.value.trim(); // 取输入内容
-  if (!content) { tip.innerHTML = '<div class="msg err">请输入消息内容</div>'; return; } // 空内容拦截
+  const session = chatSession;
+  if (!isCurrentChat(session) || session.sending) return;
+  const input = session.mask.querySelector('#chatInput');
+  const tip = session.mask.querySelector('#chatMsg');
+  const submit = session.mask.querySelector('#chatSend');
+  const draft = input.value;
+  const content = draft.trim();
+  if (!content) { tip.innerHTML = '<div class="msg err">请输入消息内容</div>'; return; }
+  session.sending = true;
+  submit.disabled = true;
   try {
     await api('/api/messages', {
       method: 'POST',
-      body: JSON.stringify({ toUserId: chatPeerId, content }) // 提交接收方与内容
+      body: JSON.stringify({ toUserId: session.peerId, content })
     });
-    input.value = ''; // 清空输入框
-    tip.innerHTML = ''; // 清除提示
-    await loadChat(); // 重新拉取会话
+    if (!isCurrentChat(session)) return;
+    if (input.value === draft) input.value = '';
+    tip.innerHTML = '';
+    await loadChat();
   } catch (err) {
-    tip.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 发送失败提示
+    if (isCurrentChat(session)) tip.innerHTML = `<div class="msg err">${esc(err.message)}</div>`;
+  } finally {
+    if (isCurrentChat(session)) {
+      session.sending = false;
+      submit.disabled = false;
+    }
   }
 }
 
-PANELS.contact = async (p) => {
-  const d = await api('/api/contact/requests');
-  const threads = await api('/api/messages/threads').catch(() => []); // 会话未读数
-  const unreadOf = (uid) => {
-    const t = threads.find((x) => x.peer_id === uid); // 找到对应会话
-    return t && t.unread ? ' ' + badge(t.unread + ' 未读', 'accepted') : ''; // 显示未读角标
-  };
-  const rows = [];
-  if (d.received.length) {
-    rows.push(d.received.map((r) => `
-      <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
-      <td>${esc(r.company_name || '-')}</td>
-      <td>
-        <button class="tiny" onclick="respondContact(${r.id}, true, this)">同意</button>
-        <button class="tiny ghost" onclick="respondContact(${r.id}, false, this)">拒绝</button>
-        <button class="tiny ghost" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}')">聊天${unreadOf(r.from_user_id)}</button>
-        ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.from_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
-      </td></tr>`).join(''));
-  }
-  const sentRows = d.sent.map((r) => `
-    <tr><td>${esc(r.user_name)}</td><td>${r.role === 'company' ? '企业' : '求职者'}</td>
-    <td>${esc(r.company_name || '-')}</td>
-    <td>${badge(r.status === 'pending' ? '待回复' : r.status === 'accepted' ? '已同意' : '已拒绝', r.status)}
-      <button class="tiny ghost" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}')">聊天${unreadOf(r.to_user_id)}</button>
-      ${user.role === 'company' ? `<button class="tiny" onclick="openChat(${r.to_user_id}, '${esc(r.user_name)}', contactText())">发布联系方式</button>` : ''}
-    </td></tr>`).join('');
+PANELS.chat = async (p) => {
   p.innerHTML = `
     <div class="card">
-      <div class="card-head">交换联系方式</div>
+      <div class="card-head">聊天</div>
       <div class="card-body">
-        <div id="contactMsg"></div>
-        ${d.received.length ? `<h4 class="form-section">待处理请求</h4>
-        <table class="grid">
-          <thead><tr><th scope="col">来自</th><th scope="col">角色</th><th scope="col">企业</th><th scope="col">操作</th></tr></thead>
-          <tbody>${rows.join('')}</tbody>
-        </table>` : '<p class="match">暂无待处理的请求。</p>'}
-        ${d.sent.length ? `<h4 class="form-section">已发送请求</h4>
-        <table class="grid">
-          <thead><tr><th scope="col">对方</th><th scope="col">角色</th><th scope="col">企业</th><th scope="col">状态 / 聊天</th></tr></thead>
-          <tbody>${sentRows}</tbody>
-        </table>` : ''}
+        <div class="chat-layout">
+          <aside class="chat-side">
+            <div class="chat-side-head"><span class="match">全部会话</span>
+              <button class="tiny ghost" onclick="renderChatList()">刷新</button></div>
+            <div id="chatList"><div class="empty">加载中…</div></div>
+          </aside>
+          <section class="chat-main" id="chatMain">
+            <div class="empty">从左侧选择联系人开始聊天，历史消息会自动加载</div>
+          </section>
+        </div>
       </div>
     </div>`;
+  await renderChatList(); // 首次加载会话列表
 };
+
+// renderChatList：渲染左侧联系人（企业端显示求职者，求职者端显示企业）
+async function renderChatList(activePeer) {
+  const list = await api('/api/messages/contacts'); // 拉取会话列表
+  window.__chatContacts = list; // 缓存
+  const box = document.getElementById('chatList');
+  if (!box) return;
+  if (!list.length) { box.innerHTML = '<div class="empty">还没有会话</div>'; return; }
+  box.innerHTML = list.map((c) => {
+    const name = c.peer_company || c.peer_name || '对方'; // 企业名优先展示
+    return `<button class="chat-item ${Number(c.peer_id) === Number(activePeer) ? 'active' : ''}"
+        data-peer="${Number(c.peer_id)}" data-name="${esc(name)}" onclick="selectChatPeer(Number(this.dataset.peer), this.dataset.name)">
+      <span class="chat-avatar" aria-hidden="true">${esc(String(name).slice(0, 1))}</span>
+      <span class="chat-meta"><b>${esc(name)}</b><span class="match">${esc(String(c.last_content || '').slice(0, 18))}</span></span>
+      ${Number(c.unread) > 0 ? `<span class="chat-unread">${Number(c.unread)}</span>` : ''}
+    </button>`;
+  }).join(''); // 渲染会话项
+}
+
+// selectChatPeer：切换右侧会话
+async function selectChatPeer(peerId, peerName) {
+  window.__chatPeer = { id: Number(peerId), name: peerName }; // 记录当前会话
+  document.querySelectorAll('.chat-item').forEach((el) => {
+    el.classList.toggle('active', Number(el.dataset.peer) === Number(peerId)); // 高亮当前联系人
+  });
+  const main = document.getElementById('chatMain');
+  main.innerHTML = `
+    <div class="chat-pane">
+      <div class="chat-pane-head"><b>${esc(peerName || '对方')}</b>
+        <button class="tiny ghost" onclick="openChat(${Number(peerId)}, this.dataset.n)" data-n="${esc(peerName || '')}">弹窗模式</button>
+      </div>
+      <div class="chat-history" id="chatHistory"><div class="match">加载中…</div></div>
+      <div class="chat-pane-foot">
+        <textarea id="chatText" rows="3" maxlength="500" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="chatPaneSend" onclick="sendPaneMessage()">发送</button>
+      </div>
+      <div id="chatPaneMsg"></div>
+    </div>`;
+  await loadPaneMessages(); // 加载历史消息
+  const ta = document.getElementById('chatText');
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendPaneMessage(); } // Enter 发送
+  });
+  ta.focus();
+}
+
+// loadPaneMessages：加载当前会话最近 50 条消息
+async function loadPaneMessages() {
+  const peer = window.__chatPeer; // 当前会话
+  if (!peer) return;
+  const d = await api(`/api/messages/${peer.id}?limit=50`); // 拉取消息
+  const box = document.getElementById('chatHistory');
+  if (!box) return;
+  const rows = d.messages || [];
+  box.innerHTML = rows.length ? rows.map((m) => `
+    <div class="chat-line ${Number(m.from_user_id) === Number(user.id) ? 'me' : 'peer'}">
+      <div class="chat-bubble">${esc(m.content).replace(/\n/g, '<br>')}</div>
+      <div class="chat-time">${esc(timeFmt(m.created_at))}${Number(m.from_user_id) === Number(user.id) ? ' · ' + (Number(m.is_read) === 1 ? '已读' : '未读') : ''}</div>
+    </div>`).join('') : '<div class="empty">还没有消息，发出第一条吧</div>';
+  box.scrollTop = box.scrollHeight; // 滚动到底
+}
+
+// sendPaneMessage：在面板内发送消息
+async function sendPaneMessage() {
+  const peer = window.__chatPeer;
+  if (!peer) return;
+  const ta = document.getElementById('chatText');
+  const tip = document.getElementById('chatPaneMsg');
+  const text = ta.value.trim();
+  if (!text) { tip.innerHTML = '<div class="msg err">请输入消息内容</div>'; return; }
+  const btn = document.getElementById('chatPaneSend');
+  if (btn) btn.disabled = true; // 防重复提交
+  try {
+    await api('/api/messages', { method: 'POST', body: JSON.stringify({ toUserId: peer.id, content: text }) }); // 发送
+    ta.value = ''; // 清空输入
+    await loadPaneMessages(); // 刷新会话
+    await renderChatList(peer.id); // 刷新左侧最近消息
+    tip.innerHTML = ''; // 清空提示
+  } catch (err) {
+    tip.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 错误提示
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// 兼容旧入口：openTab('contact') 仍可用
+PANELS.contact = PANELS.chat;
 
 // respondContact：同意或拒绝对方的联系方式交换请求
 async function respondContact(id, accept, btn) {
+  if (btn) btn.disabled = true;
   try {
     const d = await api(`/api/contact/requests/${id}/respond`, {
       method: 'POST', body: JSON.stringify({ accept })
     });
-    document.getElementById('contactMsg').innerHTML = `<div class="msg">${esc(d.message)}</div>`;
-    await openTab('contact');
+    await openTab('notify'); // 请求处理结果回到通知面板
+    const tip = document.getElementById('contactMsg');
+    if (tip) tip.innerHTML = `<div class="msg">${esc(d.message)}${accept ? '，对方电话：' + esc(d.phone || '未填写') : ''}</div>`;
   } catch (err) { alert(err.message); }
+  finally { if (btn && btn.isConnected) btn.disabled = false; }
 }
 
 PANELS.notify = async (p) => {
-  let d;
+  let d, reqs;
   try {
-    d = await api('/api/notifications'); // 拉取通知与未读数
+    [d, reqs] = await Promise.all([api('/api/notifications'), api('/api/contact/requests')]); // 通知 + 联系方式请求
   } catch (err) {
     p.innerHTML = `<div class="msg err">${esc(err.message)}</div>`; // 请求失败提示
     return;
   }
   const list = d.list || [];
+  const pending = (reqs.received || []).filter((r) => r.status === 'pending'); // 待处理的联系方式请求
+  const handled = (reqs.received || []).filter((r) => r.status !== 'pending'); // 已处理的请求
   p.innerHTML = `
     <div class="card">
-      <div class="card-head">通知</div>
+      <div class="card-head">联系方式请求</div>
+      <div class="card-body">
+        <div id="contactMsg"></div>
+        ${pending.length ? pending.map((r) => `
+          <div class="notice unread">
+            <span class="n-type">交换联系方式</span>
+            <span class="n-time">${timeFmt(r.created_at)}</span>
+            <div class="n-body">${esc(r.user_name)}（${r.role === 'company' ? '企业' : '求职者'}${r.company_name ? ' · ' + esc(r.company_name) : ''}）请求交换联系方式</div>
+            <div class="toolbar">
+              <button class="tiny" onclick="respondContact(${Number(r.id)}, true, this)">同意</button>
+              <button class="tiny ghost" onclick="respondContact(${Number(r.id)}, false, this)">拒绝</button>
+              <button class="tiny ghost" onclick="openChat(${Number(r.from_user_id)}, '${esc(r.user_name)}')">先聊聊</button>
+            </div>
+          </div>`).join('') : '<div class="empty">暂无待处理的联系方式请求</div>'}
+        ${handled.length ? `<h4 class="form-section">已处理的请求</h4>
+          <table class="grid"><thead><tr><th scope="col">对方</th><th scope="col">角色</th><th scope="col">企业</th><th scope="col">结果</th><th scope="col">电话</th><th scope="col">操作</th></tr></thead><tbody>
+          ${handled.map((r) => `<tr>
+            <td>${esc(r.user_name)}</td>
+            <td>${r.role === 'company' ? '企业' : '求职者'}</td>
+            <td>${esc(r.company_name || '-')}</td>
+            <td>${badge(r.status === 'accepted' ? '已同意' : '已拒绝', r.status)}</td>
+            <td>${r.status === 'accepted' ? esc(r.peer_phone || '未填写') : '-'}</td>
+            <td><button class="tiny ghost" onclick="openChat(${Number(r.from_user_id)}, '${esc(r.user_name)}')">聊天</button></td>
+          </tr>`).join('')}
+          </tbody></table>` : ''}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">消息通知</div>
       <div class="card-body">
         ${d.unread ? `<div class="list-bar"><span class="match">${d.unread} 条未读</span>
           <button class="tiny" onclick="readAllNotify()">全部已读</button></div>` : ''}
@@ -1345,6 +1531,7 @@ PANELS.notify = async (p) => {
             <span class="n-type">${{ application: '投递动态', interview: '面试邀约', contact: '联系方式', approve: '审核结果', message: '站内消息', account: '账号状态', resume: '简历动态', job: '职位动态', favorite: '收藏动态' }[n.type] || n.type}</span>
             <span class="n-time">${timeFmt(n.created_at)}</span>
             <div class="n-body">${esc(n.message)}</div>
+            ${n.type === 'message' ? '<button class="tiny ghost" onclick="openTab(\'chat\')">去聊天</button>' : ''}
           </div>`).join('') : '<div class="empty">暂无通知</div>'}
       </div>
     </div>`;
@@ -1483,23 +1670,27 @@ async function saveJob(e) {
 }
 
 // editJob：把职位数据填入表单进行编辑
-function editJob(id) {
-  fetch('/api/jobs/mine', { headers: { 'Authorization': 'Bearer ' + token } })
-    .then((r) => r.json()).then((d) => {
-      const job = d.data.find((j) => j.id === id);
-      editingJobId = id;
-      document.getElementById('jTitle').value = job.title;
-      document.getElementById('jReq').value = job.requirements || '';
-      document.getElementById('jLoc').value = job.location || '';
-      document.getElementById('jSalMin').value = job.salary_min || '';
-      document.getElementById('jSalMax').value = job.salary_max || '';
-      document.getElementById('jEdu').value = job.education || '';
-      document.getElementById('jExp').value = job.experience || '';
-      if (document.getElementById('jType')) document.getElementById('jType').value = job.job_type || 'fulltime';
-      if (document.getElementById('jBenefits')) document.getElementById('jBenefits').value = job.benefits || '';
-      document.getElementById('jobSubmit').textContent = '保存修改';
-      toggleJobForm();
-    });
+async function editJob(id) {
+  const form = document.getElementById('jobForm');
+  try {
+    const jobs = await api('/api/jobs/mine');
+    if (!form || form !== document.getElementById('jobForm')) return;
+    const job = jobs.find((j) => Number(j.id) === Number(id));
+    if (!job) throw new Error('职位不存在或已删除，请刷新列表');
+    editingJobId = job.id;
+    document.getElementById('jTitle').value = job.title;
+    document.getElementById('jReq').value = job.requirements || '';
+    document.getElementById('jLoc').value = job.location || '';
+    document.getElementById('jSalMin').value = job.salary_min || '';
+    document.getElementById('jSalMax').value = job.salary_max || '';
+    document.getElementById('jEdu').value = job.education || '';
+    document.getElementById('jExp').value = job.experience || '';
+    if (document.getElementById('jType')) document.getElementById('jType').value = job.job_type || 'fulltime';
+    if (document.getElementById('jBenefits')) document.getElementById('jBenefits').value = job.benefits || '';
+    document.getElementById('jobSubmit').textContent = '保存修改';
+    form.style.display = 'block';
+    renderSkillChips();
+  } catch (err) { alert(err.message); }
 }
 
 // renderJobsTable：渲染职位表格（含运营按钮与投递数）
@@ -1548,43 +1739,87 @@ async function unpublishJob(id) {
 
 PANELS.jobs = (p) => user.role === 'seeker' ? seekerJobs(p) : companyJobs(p);
 PANELS.apps = async (p) => {
-  const apps = await api('/api/applications/received');
+  const [stats, apps] = await Promise.all([
+    api('/api/applications/received/stats'), // 各状态数量
+    api('/api/applications/received'), // 全部收到的简历
+  ]);
+  window.__receivedApps = apps; // 缓存给筛选使用
+  receivedAttachments = new Map(apps.map((a) => [Number(a.id), a])); // 附件预览缓存
+  const tabs = [
+    ['all', '全部', stats.all], ['submitted', '待查看', stats.submitted],
+    ['viewed', '已查看', stats.viewed], ['interview', '待面试', stats.interview],
+    ['accepted', '已录取', stats.accepted], ['rejected', '不通过', stats.rejected],
+  ];
   p.innerHTML = `
     <div class="card">
       <div class="card-head">收到的简历</div>
       <div class="card-body">
         <div id="appsMsg"></div>
-        ${apps.length ? `
-        <table class="grid"><thead><tr><th scope="col">候选人</th><th scope="col">投递职位</th><th scope="col">简历附件</th><th scope="col">技能标签</th><th scope="col">经验</th><th scope="col">学历</th><th scope="col">匹配分</th><th scope="col">匹配理由</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
-          
-          ${apps.map((a) => `
-            <tr>
-              <td><b>${esc(a.candidate)}</b></td>
-              <td>${esc(a.job_title)}</td>
-              <td>${a.attachment_path
-                ? (a.attachment_exists === false
-                    ? '<span class="match">附件已失效</span>'
-                    : `<button class="tiny" onclick="previewAttachment('${esc(a.attachment_name || '')}', '${esc(a.attachment_path)}')">预览</button>
-                       <a class="file" href="/uploads/${encodeURIComponent(a.attachment_path)}" download>下载</a>`)
-                : '<span class="match">未上传</span>'}</td>
-              <td class="match truncate" title="${esc(a.skills)}">${esc(a.skills)}</td>
-              <td class="truncate" title="${esc(a.experience)}">${esc(a.experience)}</td>
-              <td>${esc(a.education)}</td>
-              <td>${scoreCell(a.match_score)}</td>
-              <td class="match truncate" title="${esc(a.match_reasons)}">${esc(a.match_reasons)}</td>
-              <td>${badge(statusLabel(a.status), a.status)}</td>
-              <td>
-                <button class="tiny" onclick="setAppStatus(${a.id},'viewed')">已查看</button>
-                <button class="tiny" onclick="askInterview(${a.id})">邀面试</button>
-                <button class="tiny ghost" onclick="setAppStatus(${a.id},'accepted')">录用</button>
-                <button class="tiny ghost" onclick="setAppStatus(${a.id},'rejected')">不通过</button>
-                <button class="tiny ghost" onclick="requestContact(${a.seeker_id})">交换联系方式</button>
-              </td>
-            </tr>`).join('')}
-        </tbody></table>` : '<div class="empty">暂无收到的简历</div>'}
+        <div class="seg" id="appStatusTabs" role="tablist">
+          ${tabs.map(([k, n, c], i) => `<button type="button" role="tab" data-status="${k}" aria-selected="${i === 0}" class="${i === 0 ? 'active' : ''}" onclick="filterReceived('${k}')">${n} <span class="count">${c || 0}</span></button>`).join('')}
+        </div>
+        <div id="receivedTable"></div>
       </div>
     </div>`;
+  renderReceived('all'); // 默认展示全部
 };
+
+// filterReceived：切换归档页签
+function filterReceived(status) {
+  document.querySelectorAll('#appStatusTabs button').forEach((b) => {
+    const on = b.dataset.status === status; // 是否当前页签
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  renderReceived(status);
+}
+
+// renderReceived：按归档状态渲染收到的简历
+function renderReceived(status) {
+  const all = window.__receivedApps || [];
+  const rows = status && status !== 'all' ? all.filter((a) => a.status === status) : all; // 过滤
+  const box = document.getElementById('receivedTable');
+  if (!box) return;
+  if (!rows.length) { box.innerHTML = '<div class="empty">该归档下暂无简历</div>'; return; }
+  box.innerHTML = `
+    <table class="grid"><thead><tr><th scope="col">候选人</th><th scope="col">投递职位</th><th scope="col">投递次数</th><th scope="col">简历附件</th><th scope="col">技能标签</th><th scope="col">经验</th><th scope="col">学历</th><th scope="col">匹配分</th><th scope="col">匹配理由</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+    ${rows.map((a) => `
+      <tr>
+        <td><b>${esc(a.candidate)}</b></td>
+        <td>${esc(a.job_title)}</td>
+        <td class="num">${Number(a.apply_count) || 1}</td>
+        <td>${a.attachment_path
+          ? (a.attachment_exists === false
+              ? '<span class="match">附件已失效</span>'
+              : `<button class="tiny" onclick="previewApplicationAttachment(${Number(a.id)})">预览</button>
+                 <a class="file" href="/api/applications/${Number(a.id)}/attachment?download=1" download>下载</a>`)
+          : '<span class="match">未上传</span>'}</td>
+        <td class="match truncate" title="${esc(a.skills)}">${esc(a.skills)}</td>
+        <td class="truncate" title="${esc(a.experience)}">${esc(a.experience)}</td>
+        <td>${esc(a.education)}</td>
+        <td>${scoreCell(a.match_score)}</td>
+        <td class="match truncate" title="${esc(a.match_reasons)}">${esc(a.match_reasons)}</td>
+        <td>${badge(statusLabel(a.status), a.status)}</td>
+        <td>
+          <button class="tiny" onclick="setAppStatus(${a.id},'viewed')">已查看</button>
+          <button class="tiny" onclick="askInterview(${a.id})">邀面试</button>
+          <button class="tiny ghost" onclick="setAppStatus(${a.id},'accepted')">录取</button>
+          <button class="tiny ghost" onclick="setAppStatus(${a.id},'rejected')">不通过</button>
+          <button class="tiny ghost" onclick="requestContact(${a.seeker_id})">交换联系方式</button>
+          <button class="tiny ghost danger" onclick="deleteApplication(${a.id})">删除</button>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+// deleteApplication：企业端删除收到的简历（软删除）
+async function deleteApplication(id) {
+  if (!confirm('确定删除这条简历记录吗？删除后不再出现在列表中。')) return;
+  try {
+    await api(`/api/applications/${id}`, { method: 'DELETE' }); // 软删除
+    await openTab('apps'); // 刷新列表与计数
+  } catch (err) { alert(err.message); }
+}
 
 // setAppStatus：修改投递状态（查看 / 面试 / 录用 / 不合适）
 async function setAppStatus(id, status) {
@@ -1600,7 +1835,8 @@ async function requestContact(toUserId) {
     const d = await api('/api/contact/request', {
       method: 'POST', body: JSON.stringify({ toUserId })
     });
-    document.getElementById('appsMsg').innerHTML = `<div class="msg">${esc(d.message)}</div>`;
+    const tip = document.getElementById('jobContactMsg') || document.getElementById('appsMsg');
+    if (tip) tip.innerHTML = `<div class="msg">${esc(d)}</div>`;
   } catch (err) { alert(err.message); }
 }
 
@@ -1620,13 +1856,14 @@ PANELS.companies = async (p) => {
               <td>${esc(c.username)}</td>
               <td>${esc(c.phone)}</td>
               <td>${fileLink('查看许可证', c.license_path)}</td>
-              <td>${badge(c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : '已停用',
-                c.status === 'active' ? 'accepted' : c.status === 'pending' ? 'pending' : 'banned')}</td>
-              <td>${c.status === 'pending'
-                ? `<button class="tiny" onclick="approveCompany(${c.id})">通过</button>
-                   <button class="tiny ghost" onclick="rejectCompany(${c.id})">驳回</button>`
-                : `<button class="tiny ghost" onclick="toggleUserStatus(${c.id},'active')">启用</button>
-                   <button class="tiny ghost" onclick="toggleUserStatus(${c.id},'banned')">停用</button>`}</td>
+              <td>${badge(c.status === 'pending' ? '待审核' : c.status === 'active' ? '已通过' : c.reject_reason ? '审核未通过' : '已停用',
+                c.status === 'active' ? 'accepted' : c.status === 'pending' ? 'pending' : 'banned')}
+                ${c.reject_reason ? `<div class="match">${esc(c.reject_reason)}</div>` : ''}</td>
+              <td>${c.status === 'pending' || (c.status !== 'active' && c.reject_reason)
+                ? `<button class="tiny" onclick="approveCompany(${Number(c.id)})">${c.reject_reason ? '重新审核通过' : '通过'}</button>
+                   <button class="tiny ghost" onclick="rejectCompany(${Number(c.id)})">驳回</button>`
+                : `<button class="tiny ghost" onclick="toggleUserStatus(${Number(c.id)},'active')">启用</button>
+                   <button class="tiny ghost" onclick="toggleUserStatus(${Number(c.id)},'banned')">停用</button>`}</td>
             </tr>`).join('')}
         </tbody></table>` : '<div class="empty">暂无企业注册申请</div>'}
       </div>
@@ -1652,30 +1889,131 @@ async function approveCompany(id) {
 }
 
 PANELS.users = async (p) => {
-  const list = await api('/api/admin/users');
   p.innerHTML = `
     <div class="card">
       <div class="card-head">用户管理</div>
       <div class="card-body">
-        <table class="grid"><thead><tr><th scope="col">用户名</th><th scope="col">角色</th><th scope="col">姓名</th><th scope="col">企业</th><th scope="col">电话</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
-          
-          ${list.map((u) => `
-            <tr>
-              <td><b>${esc(u.username)}</b></td>
-              <td>${{ seeker: '求职者', company: '企业', admin: '管理员' }[u.role]}</td>
-              <td>${esc(u.name)}</td>
-              <td>${esc(u.company_name || '-')}</td>
-              <td>${esc(u.phone || '-')}</td>
-              <td>${badge({ active: '正常', pending: '待审核', banned: '已停用' }[u.status] || u.status, u.status)}</td>
-              <td>${u.role !== 'admin'
-                ? `<button class="tiny ghost" onclick="toggleUserStatus(${u.id},'active')">启用</button>
-                   <button class="tiny ghost" onclick="toggleUserStatus(${u.id},'banned')">停用</button>`
-                : '<span class="match">-</span>'}</td>
-            </tr>`).join('')}
-        </tbody></table>
+        <div class="filters">
+          <div><label>关键词</label><input type="search" id="adminUserKeyword" placeholder="用户名 / 姓名 / 企业"></div>
+          <div><label>角色</label>
+            <select id="adminUserRole">
+              <option value="">全部</option><option value="seeker">求职者</option>
+              <option value="company">企业</option><option value="admin">管理员</option>
+            </select>
+          </div>
+          <div><button onclick="loadAdminUsers()">查询</button></div>
+        </div>
+        <div id="adminUserTable"></div>
       </div>
     </div>`;
+  await loadAdminUsers(); // 首次加载
 };
+
+// loadAdminUsers：按关键字与角色拉取用户列表
+async function loadAdminUsers() {
+  const kw = (document.getElementById('adminUserKeyword') || {}).value || '';
+  const role = (document.getElementById('adminUserRole') || {}).value || '';
+  const q = new URLSearchParams(); // 查询参数
+  if (kw.trim()) q.set('keyword', kw.trim());
+  if (role) q.set('role', role);
+  const rows = await api(`/api/admin/users/manage?${q}`);
+  const box = document.getElementById('adminUserTable');
+  if (!box) return;
+  box.innerHTML = `
+    <table class="grid"><thead><tr><th scope="col">用户名</th><th scope="col">角色</th><th scope="col">姓名</th><th scope="col">企业</th><th scope="col">电话</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead><tbody>
+    ${rows.map((u) => `
+      <tr>
+        <td><b>${esc(u.username)}</b></td>
+        <td>${{ seeker: '求职者', company: '企业', admin: '管理员' }[u.role] || esc(u.role)}</td>
+        <td>${esc(u.name)}</td>
+        <td>${esc(u.company_name || '-')}</td>
+        <td>${esc(u.phone || '-')}</td>
+        <td>${badge({ active: '正常', pending: '待审核', banned: '已停用' }[u.status] || u.status, u.status)}</td>
+        <td>${u.role !== 'admin'
+          ? `<button class="tiny ghost" onclick="toggleUserStatus(${u.id},'active')">启用</button>
+             <button class="tiny ghost" onclick="toggleUserStatus(${u.id},'banned')">停用</button>
+             <button class="tiny ghost danger" onclick="adminDeleteUser(${u.id}, '${esc(u.username)}')">删除</button>`
+          : '<span class="match">-</span>'}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+// adminDeleteUser：管理员删除用户（连带关联数据）
+async function adminDeleteUser(id, username) {
+  if (!confirm(`确定删除用户「${username}」吗？其简历、投递、消息等数据会一并删除，且不可恢复。`)) return;
+  try {
+    await api(`/api/admin/users/${id}`, { method: 'DELETE' });
+    await loadAdminUsers();
+  } catch (err) { alert(err.message); }
+}
+
+PANELS.adminJobs = async (p) => {
+  p.innerHTML = `
+    <div class="card">
+      <div class="card-head">职位管理</div>
+      <div class="card-body">
+        <div class="filters">
+          <div><label>关键词</label><input type="search" id="adminJobKeyword" placeholder="职位标题 / 企业名称"></div>
+          <div><label>状态</label>
+            <select id="adminJobStatus"><option value="">全部</option><option value="published">在招</option><option value="offline">已下架</option></select>
+          </div>
+          <div><button onclick="loadAdminJobs()">查询</button></div>
+        </div>
+        <div id="adminJobTable"></div>
+      </div>
+    </div>`;
+  await loadAdminJobs(); // 首次加载
+};
+
+// loadAdminJobs：拉取职位列表并渲染
+async function loadAdminJobs() {
+  const kw = (document.getElementById('adminJobKeyword') || {}).value || '';
+  const status = (document.getElementById('adminJobStatus') || {}).value || '';
+  const q = new URLSearchParams(); // 查询参数
+  if (kw.trim()) q.set('keyword', kw.trim());
+  if (status) q.set('status', status);
+  const rows = await api(`/api/admin/jobs/manage?${q}`);
+  const box = document.getElementById('adminJobTable');
+  if (!box) return;
+  box.innerHTML = rows.length ? `
+    <table class="grid"><thead><tr><th scope="col">职位</th><th scope="col">企业</th><th scope="col">地点</th><th scope="col">薪资</th><th scope="col">投递</th><th scope="col">状态</th><th scope="col">标记</th><th scope="col">操作</th></tr></thead><tbody>
+    ${rows.map((j) => `
+      <tr>
+        <td><b>${esc(j.title)}</b></td>
+        <td>${esc(j.company_name)}</td>
+        <td>${esc(j.location || '-')}</td>
+        <td class="num">${j.salary_min || 0}-${j.salary_max || '不限'}</td>
+        <td class="num">${Number(j.apply_count) || 0}</td>
+        <td>${badge(j.status === 'published' ? '在招' : '已下架', j.status === 'published' ? 'accepted' : 'banned')}</td>
+        <td>${Number(j.is_top) ? badge('置顶', 'pending') : ''} ${Number(j.is_urgent) ? badge('急招', 'interview') : ''}</td>
+        <td>
+          ${j.status === 'published'
+            ? `<button class="tiny ghost" onclick="adminJobAction(${j.id},{status:'offline'})">下架</button>`
+            : `<button class="tiny ghost" onclick="adminJobAction(${j.id},{status:'published'})">上架</button>`}
+          <button class="tiny ghost" onclick="adminJobAction(${j.id},{isTop:${Number(j.is_top) ? 0 : 1}})">${Number(j.is_top) ? '取消置顶' : '置顶'}</button>
+          <button class="tiny ghost" onclick="adminJobAction(${j.id},{isUrgent:${Number(j.is_urgent) ? 0 : 1}})">${Number(j.is_urgent) ? '取消急招' : '急招'}</button>
+          <button class="tiny ghost danger" onclick="adminDeleteJob(${j.id}, '${esc(j.title)}')">删除</button>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>` : '<div class="empty">没有符合条件的职位</div>';
+}
+
+// adminJobAction：管理员修改职位状态或标记
+async function adminJobAction(id, patch) {
+  try {
+    await api(`/api/admin/jobs/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    await loadAdminJobs(); // 刷新列表
+  } catch (err) { alert(err.message); }
+}
+
+// adminDeleteJob：管理员删除职位及其投递记录
+async function adminDeleteJob(id, title) {
+  if (!confirm(`确定删除职位「${title}」吗？该职位的投递与面试记录会一并删除。`)) return;
+  try {
+    await api(`/api/admin/jobs/${id}`, { method: 'DELETE' });
+    await loadAdminJobs();
+  } catch (err) { alert(err.message); }
+}
 
 // toggleUserStatus：启用或停用用户账号
 async function toggleUserStatus(id, status) {

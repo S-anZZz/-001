@@ -41,7 +41,7 @@ app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   // PDF / 图片 / 文档等文件响应不能带 CSP，否则浏览器会认为内嵌插件被禁止，直接变成下载而不是预览
-  const isFile = req.path.startsWith('/uploads/') ||
+  const isFile = req.path.startsWith('/uploads/') || /^\/api\/applications\/\d+\/attachment$/.test(req.path) ||
     /\.(pdf|png|jpe?g|gif|webp|docx?|xlsx?|zip)$/i.test(req.path);
   if (!isFile) {
     res.setHeader('X-Frame-Options', 'SAMEORIGIN'); // 允许同源 iframe 预览
@@ -72,18 +72,39 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 上传文件名的白名单字符：不允许出现 / \ .. 等可用于目录穿越的字符
 const SAFE_FILE = /^[A-Za-z0-9._\-\u4e00-\u9fa5]+$/;
 
-// 上传文件访问：必须登录，且文件名只能是存储层里的合法名字
+async function canReadFile(user, file) {
+  if (user.role === 'admin') return true;
+  const [owners] = await pool.query(
+    'SELECT id, avatar_path, license_path FROM users WHERE avatar_path = ? OR license_path = ?', [file, file]
+  );
+  if (owners.some((owner) => owner.id === user.id)) return true;
+  if (owners.some((owner) => owner.license_path === file)) return false;
+  if (owners.some((owner) => owner.avatar_path === file)) return true;
+  const [resumes] = await pool.query(
+    `SELECT r.user_id, r.visibility, u.status,
+       EXISTS(SELECT 1 FROM applications a WHERE a.resume_id = r.id AND a.company_id = ?) AS applied
+     FROM resumes r JOIN users u ON u.id = r.user_id WHERE r.attachment_path = ?`, [user.id, file]
+  );
+  return resumes.some((resume) => resume.user_id === user.id ||
+    (user.role === 'company' && resume.status === 'active' &&
+      (resume.visibility === 'public' || (resume.visibility === 'targeted' && resume.applied))));
+}
+
+function sendFile(res, file, buffer, download = false) {
+  res.type(path.extname(file).toLowerCase() || 'bin');
+  const asciiName = file.replace(/[^\x20-\x7E]/g, '_');
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(file)}`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.send(buffer);
+}
+
 app.get('/uploads/:file', requireAuth(), wrap(async (req, res) => {
   const file = String(req.params.file || '');
-  if (!SAFE_FILE.test(file) || file.includes('..')) return res.status(400).send('文件名不合法'); // 拒绝目录穿越
-  const buffer = await getFile(file); // 从存储层读取文件内容
-  if (!buffer) return res.status(404).send('文件不存在'); // 未命中直接返回 404
-  const ext = path.extname(file).toLowerCase(); // 取扩展名
-  res.type(ext || 'bin'); // 按扩展名设置 Content-Type
-  const asciiName = file.replace(/[^\x20-\x7E]/g, '_'); // 生成纯 ASCII 文件名，兼容不认 filename* 的浏览器
-  res.setHeader('Content-Disposition', `inline; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(file)}`); // 同时给出两种写法
-  res.setHeader('Cache-Control', 'private, max-age=600'); // 个人资料不进入共享缓存
-  res.send(buffer); // 输出文件二进制内容
+  if (!SAFE_FILE.test(file) || file.includes('..')) return send(res, false, '文件名不合法', 400);
+  if (!(await canReadFile(req.user, file))) return send(res, false, '文件不存在或无权访问', 403);
+  const buffer = await getFile(file);
+  if (!buffer) return send(res, false, '文件不存在', 404);
+  sendFile(res, file, buffer);
 }));
 
 // BizError：可安全回显给前端的业务异常
@@ -153,8 +174,31 @@ function requireAuth(roles) {
 }
 
 // notify：写入一条站内通知（面试、审核、投递状态等统一走这里）
-async function notify(userId, type, message) {
-  await pool.query('INSERT INTO notifications (user_id, type, message) VALUES (?,?,?)', [userId, type, message]);
+async function notify(userId, type, message, db = pool) {
+  await db.query('INSERT INTO notifications (user_id, type, message) VALUES (?,?,?)', [userId, type, message]);
+}
+
+async function transaction(fn) {
+  const db = await pool.getConnection();
+  try {
+    await db.beginTransaction();
+    const result = await fn(db);
+    await db.commit();
+    return result;
+  } catch (error) {
+    await db.rollback();
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
+function futureTime(value) {
+  const date = typeof value === 'string' ? new Date(value) : new Date(NaN);
+  if (!Number.isFinite(date.getTime()) || date.getTime() <= Date.now()) {
+    throw new BizError('请选择有效的未来面试时间');
+  }
+  return date;
 }
 
 // 各类上传的大小上限（字节）
@@ -186,7 +230,7 @@ async function saveBase64(name, base64, allowed, maxBytes, label, prefix) {
   if (buffer.length > maxBytes) throw new BizError(`${label}不能超过 ${Math.round(maxBytes / 1024 / 1024)}MB`, 400); // 大小限制
   if (!magicOk(buffer, ext)) throw new BizError(`${label}内容与扩展名不符`, 400); // 文件头校验
   const safe = name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_'); // 过滤非法文件名字符
-  const file = `${Date.now()}-${prefix}${safe}`; // 生成唯一文件名
+  const file = `${newToken()}-${prefix}${safe.slice(-180)}`;
   return putFile(file, buffer); // 写入存储层（磁盘或数据库）
 }
 
@@ -296,8 +340,11 @@ app.post('/api/login', wrap(async (req, res) => {
     return send(res, false, '用户名或密码错误');
   }
   loginFails.delete(key); // 登录成功清除失败记录
-  if (user.status === 'pending') return send(res, false, '账号待管理员审核，暂不能登录'); // 企业待审核不可登录
-  if (user.status !== 'active') return send(res, false, '账号已被停用'); // 停用账号不可登录
+  if (user.status === 'pending') return send(res, false, '账号待管理员审核，暂不能登录');
+  if (user.role === 'company' && user.status !== 'active' && user.reject_reason) {
+    return send(res, false, `企业审核未通过：${user.reject_reason}。请联系管理员补交资料。`, 403);
+  }
+  if (user.status !== 'active') return send(res, false, '账号已被停用', 403);
   if (needsRehash(user.password)) { // 旧版固定盐哈希，登录成功后自动升级
     await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashPassword(password), user.id]);
   }
@@ -372,8 +419,18 @@ app.post('/api/resume', requireAuth(['seeker']), wrap(async (req, res) => {
 app.get('/api/jobs', wrap(async (req, res) => {
   // 支持关键词、地点、薪资、学历、经验筛选，并分页返回
   const { keyword, location, minSalary, maxSalary, education, experience, sort } = req.query; // 解析筛选与排序条件
-  const page = Math.max(1, Number(req.query.page) || 1); // 页码，最小为 1
-  const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || 10)); // 每页条数，限制 1~50
+  const page = Number(req.query.page || 1);
+  const pageSize = Number(req.query.pageSize || 10);
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50) {
+    return send(res, false, '分页参数不合法');
+  }
+  if (sort && !['latest', 'salaryAsc', 'salaryDesc', 'match'].includes(sort)) return send(res, false, '排序方式不合法');
+  for (const value of [minSalary, maxSalary]) {
+    if (value !== undefined && value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+      return send(res, false, '薪资筛选条件不合法');
+    }
+  }
+  const viewer = sort === 'match' ? await currentUser(req) : null;
   const where = []; // 动态条件集合
   const args = []; // 条件参数集合
   if (keyword) { where.push('(j.title LIKE ? OR j.requirements LIKE ?)'); args.push(`%${keyword}%`, `%${keyword}%`); } // 关键词匹配职位或要求
@@ -382,17 +439,16 @@ app.get('/api/jobs', wrap(async (req, res) => {
   if (maxSalary) { where.push('j.salary_min <= ?'); args.push(+maxSalary); } // 期望上限：职位下限不高于期望，形成区间重叠
   if (education) { where.push('j.education = ?'); args.push(education); } // 按学历筛选
   if (experience) { where.push('j.experience = ?'); args.push(experience); } // 按经验筛选
-  const base = `FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status = 'published'`
+  const base = `FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.status = 'published' AND u.status = 'active' AND u.role = 'company'`
     + (where.length ? ' AND ' + where.join(' AND ') : ''); // 公共 FROM 与 WHERE
   const [countRows] = await pool.query(`SELECT COUNT(*) AS total ${base}`, args); // 统计总数用于分页
   const total = countRows[0].total; // 总条数
-  if (sort === 'match' && req.user && req.user.role === 'seeker') {
-    // 相关度排序：取有主简历的求职者，按匹配分排序后再分页
-    const [resumes] = await pool.query('SELECT * FROM resumes WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1', [req.user.id]);
+  if (sort === 'match' && viewer && viewer.role === 'seeker') {
+    const [resumes] = await pool.query('SELECT * FROM resumes WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1', [viewer.id]);
     const resume = resumes[0];
     if (resume) {
       const [all] = await pool.query(
-        `SELECT j.*, u.company_name AS company, u.verified ${base} ORDER BY j.is_top DESC, j.id DESC LIMIT 300`, args
+        `SELECT j.*, u.company_name AS company, u.verified ${base} ORDER BY j.is_top DESC, j.id DESC`, args
       ); // 先取候选集
       const scored = all.map((j) => ({ ...j, match: matchScore(resume, j) })) // 计算匹配度
         .sort((a, b) => (b.is_top - a.is_top) || (b.match.score - a.match.score)); // 置顶优先，其次匹配度
@@ -400,10 +456,14 @@ app.get('/api/jobs', wrap(async (req, res) => {
       return send(res, true, { list: slice, total: scored.length, page, pageSize, pages: Math.max(1, Math.ceil(scored.length / pageSize)) });
     }
   }
+  const order = {
+    salaryAsc: 'j.salary_min IS NULL, j.salary_min ASC, j.id DESC',
+    salaryDesc: 'j.salary_max IS NULL, j.salary_max DESC, j.id DESC'
+  }[sort] || 'COALESCE(j.refreshed_at, j.created_at) DESC, j.id DESC';
   const [rows] = await pool.query(
     `SELECT j.*, u.company_name AS company, u.verified,
             (SELECT COUNT(*) FROM applications a WHERE a.job_id = j.id) AS apply_count
-     ${base} ORDER BY j.is_top DESC, COALESCE(j.refreshed_at, j.created_at) DESC, j.id DESC LIMIT ? OFFSET ?`,
+     ${base} ORDER BY j.is_top DESC, ${order} LIMIT ? OFFSET ?`,
     [...args, pageSize, (page - 1) * pageSize]
   ); // 分页查询当前页数据（置顶优先、刷新时间排序）
   send(res, true, { list: rows, total, page, pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) }); // 返回列表与分页信息
@@ -411,7 +471,10 @@ app.get('/api/jobs', wrap(async (req, res) => {
 
 // GET /api/jobs/mine：企业查询自己发布的全部职位
 app.get('/api/jobs/mine', requireAuth(['company']), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM jobs WHERE company_id = ? ORDER BY id DESC LIMIT 200', [req.user.id]); // 查询该企业的职位（上限 200 条）
+  const [rows] = await pool.query(
+    `SELECT j.*, (SELECT COUNT(*) FROM applications a WHERE a.job_id = j.id) AS apply_count
+     FROM jobs j WHERE j.company_id = ? ORDER BY j.id DESC LIMIT 200`, [req.user.id]
+  );
   send(res, true, rows); // 返回职位列表
 }));
 
@@ -421,8 +484,9 @@ app.get('/api/jobs/:id', wrap(async (req, res) => {
   if (!/^\d+$/.test(req.params.id)) return send(res, false, '职位不存在'); // 只接受数字 ID
   const [rows] = await pool.query(
     `SELECT j.*, u.company_name AS company, u.verified, u.company_intro, u.company_size, u.company_industry
-     FROM jobs j JOIN users u ON u.id = j.company_id WHERE j.id = ?`, [req.params.id]
-  ); // 联表取企业与职位信息
+     FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE j.id = ? AND j.status = 'published' AND u.status = 'active' AND u.role = 'company'`, [req.params.id]
+  );
   if (!rows.length) return send(res, false, '职位不存在'); // 不存在直接返回
   await pool.query('UPDATE jobs SET view_count = view_count + 1 WHERE id = ?', [req.params.id]); // 浏览数累加
   send(res, true, rows[0]); // 返回详情
@@ -481,9 +545,12 @@ app.patch('/api/jobs/:id/unpublish', requireAuth(['company']), wrap(async (req, 
 
 // 求职者：投递职位，计算匹配分并生成匹配理由
 app.post('/api/jobs/:id/apply', requireAuth(['seeker']), wrap(async (req, res) => {
-  const [jobRows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 查询职位
-  const job = jobRows[0]; // 取职位
-  if (!job || job.status !== 'published') return send(res, false, '职位不存在或未发布'); // 校验职位状态
+  const [jobRows] = await pool.query(
+    `SELECT j.* FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE j.id = ? AND u.status = 'active' AND u.role = 'company'`, [req.params.id]
+  );
+  const job = jobRows[0];
+  if (!job || job.status !== 'published') return send(res, false, '职位不存在、已下架或企业已停用'); // 校验职位状态
   let resume;
   if (req.body && req.body.resumeId) { // 指定了某一份简历
     const [rows] = await pool.query('SELECT * FROM resumes WHERE id = ? AND user_id = ?', [req.body.resumeId, req.user.id]);
@@ -492,27 +559,30 @@ app.post('/api/jobs/:id/apply', requireAuth(['seeker']), wrap(async (req, res) =
     const [rows] = await pool.query('SELECT * FROM resumes WHERE user_id = ? ORDER BY is_default DESC, id DESC LIMIT 1', [req.user.id]);
     resume = rows[0];
   }
-  if (!resume) return send(res, false, '请先创建简历后再投递'); // 无简历不可投递
-  const [dup] = await pool.query('SELECT id FROM applications WHERE resume_id=? AND job_id=?', [resume.id, job.id]); // 查重
-  if (dup.length) return send(res, false, '已投递过该职位'); // 重复投递提示
+  if (!resume) return send(res, false, '请先创建简历后再投递');
+  if (resume.visibility === 'hidden') return send(res, false, '请先将简历设为公开或仅投递可见，再进行投递');
   const { score, reasons } = matchScore(resume, job); // 计算匹配分与理由
-  let info;
-  try {
-    [info] = await pool.query(
-      `INSERT INTO applications (resume_id, job_id, seeker_id, company_id, status, match_score, match_reasons)
-       VALUES (?,?,?,?,'submitted',?,?)`,
-      [resume.id, job.id, req.user.id, job.company_id, score, reasons]
-    ); // 插入投递记录
-  } catch (e) {
-    if (e.code === 'ER_DUP_ENTRY') return send(res, false, '已投递过该职位'); // 并发重复投递由唯一索引拦截
-    throw e; // 其他异常继续上抛
-  }
-  await notify(job.company_id, 'application', `收到新简历：${resume.name} 投递了「${job.title}」（匹配分 ${score}）`);
+  // 原子 upsert：首次投递插入，重复投递在原记录上累加次数并刷新状态（唯一索引保证并发安全）
+  await pool.query(
+    `INSERT INTO applications (resume_id, job_id, seeker_id, company_id, status, match_score, match_reasons, apply_count, deleted)
+     VALUES (?,?,?,?,'submitted',?,?,1,0)
+     ON DUPLICATE KEY UPDATE resume_id = VALUES(resume_id), status = 'submitted', match_score = VALUES(match_score),
+       match_reasons = VALUES(match_reasons), apply_count = applications.apply_count + 1, deleted = 0, updated_at = NOW()`,
+    [resume.id, job.id, req.user.id, job.company_id, score, reasons]
+  ); // 写入或累加
+  const [saved] = await pool.query('SELECT id, apply_count FROM applications WHERE seeker_id = ? AND job_id = ?', [req.user.id, job.id]); // 读取最新记录
+  const appId = saved[0].id; // 投递 ID
+  const applyCount = Number(saved[0].apply_count); // 当前投递次数
+  const firstTime = applyCount === 1; // 是否首次投递
+  await notify(job.company_id, 'application',
+    firstTime ? `收到新简历：${resume.name} 投递了「${job.title}」（匹配分 ${score}）`
+              : `${resume.name} 再次投递了「${job.title}」（第 ${applyCount} 次，匹配分 ${score}）`); // 通知企业
   await pool.query(
     'INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
-    [info.insertId, req.user.id, 'submitted', `投递简历「${resume.title || '我的简历'}」，匹配分 ${score}`]
-  ); // 记录投递轨迹
-  send(res, true, { id: info.insertId, score, reasons });
+    [appId, req.user.id, firstTime ? 'submitted' : 'resubmitted',
+     firstTime ? `投递简历「${resume.title || '我的简历'}」，匹配分 ${score}` : `第 ${applyCount} 次投递，匹配分 ${score}`]
+  ); // 记录轨迹
+  send(res, true, { id: appId, score, reasons, applyCount });
 }));
 
 // 求职者：查看我的投递记录（关联职位与企业信息）
@@ -531,13 +601,20 @@ app.get('/api/applications/mine', requireAuth(['seeker']), wrap(async (req, res)
 app.get('/api/applications/received', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT a.*, r.name AS candidate, r.skills, r.experience, r.education,
-            r.attachment_name, r.attachment_path,
+            r.attachment_name, r.attachment_path, r.visibility, u.status AS seeker_status,
             j.title AS job_title
      FROM applications a JOIN resumes r ON r.id = a.resume_id
-     JOIN jobs j ON j.id = a.job_id
-     WHERE a.company_id = ? ORDER BY a.id DESC LIMIT 200`,
-    [req.user.id]
-  ); // 查询企业收到的投递（上限 200 条）
+     JOIN users u ON u.id = r.user_id JOIN jobs j ON j.id = a.job_id
+     WHERE a.company_id = ? AND a.deleted = 0${['submitted','viewed','interview','accepted','rejected'].includes(String(req.query.status || '')) ? ' AND a.status = ?' : ''}
+     ORDER BY a.id DESC LIMIT 200`,
+    String(req.query.status || '') ? [req.user.id, String(req.query.status)] : [req.user.id]
+  );
+  for (const row of rows) {
+    if (row.visibility === 'hidden' || row.seeker_status !== 'active') {
+      row.candidate = '简历不可见';
+      for (const key of ['skills', 'experience', 'education', 'attachment_name', 'attachment_path', 'match_reasons']) row[key] = null;
+    }
+  }
   if (FILE_MODE === 'db') { // 数据库存储模式：核对文件是否还在
     const names = rows.map((r) => r.attachment_path).filter(Boolean); // 取出附件名
     if (names.length) {
@@ -549,6 +626,34 @@ app.get('/api/applications/received', requireAuth(['company']), wrap(async (req,
     }
   }
   send(res, true, rows); // 返回投递列表
+}));
+
+app.get('/api/applications/:id/attachment', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT a.id, r.attachment_path FROM applications a JOIN resumes r ON r.id = a.resume_id
+     WHERE a.id = ? AND a.company_id = ?`, [req.params.id, req.user.id]
+  );
+  const application = rows[0];
+  if (!application || !application.attachment_path) return send(res, false, '附件不存在或无权访问', 403);
+  const file = application.attachment_path;
+  if (!SAFE_FILE.test(file) || file.includes('..') || !(await canReadFile(req.user, file))) {
+    return send(res, false, '附件不存在或无权访问', 403);
+  }
+  const buffer = await getFile(file);
+  if (!buffer) return send(res, false, '附件不存在', 404);
+  const download = req.query.download === '1';
+  await transaction(async (db) => {
+    await db.query('SELECT id FROM applications WHERE id = ? FOR UPDATE', [application.id]);
+    const action = download ? 'downloaded' : 'viewed';
+    const [events] = await db.query('SELECT id FROM app_events WHERE application_id = ? AND actor_id = ? AND action = ? LIMIT 1',
+      [application.id, req.user.id, action]);
+    if (!events.length) {
+      await db.query('INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
+        [application.id, req.user.id, action, download ? '企业下载了简历附件' : '企业查看了简历附件']);
+    }
+    await db.query("UPDATE applications SET status='viewed' WHERE id=? AND status='submitted'", [application.id]);
+  });
+  sendFile(res, file, buffer, download);
 }));
 
 // 企业端：更新投递状态（已查看/邀面试/录用/不通过）
@@ -572,35 +677,44 @@ app.patch('/api/applications/:id/status', requireAuth(['company']), wrap(async (
 
 // 企业端：发送面试邀约，生成会议链接并通知求职者
 app.post('/api/applications/:id/interview', requireAuth(['company']), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM applications WHERE id = ?', [req.params.id]); // 查询投递记录
-  const app_ = rows[0]; // 取投递记录
-  if (!app_ || app_.company_id !== req.user.id) return send(res, false, '投递记录不存在或无权限'); // 校验归属
-  const { scheduledAt, mode, note } = req.body || {}; // 面试时间、方式、备注
-  if (!scheduledAt) return send(res, false, '请选择面试时间'); // 时间必填
-  const meeting = createMeeting({ provider: req.body.provider || 'tencent', topic: '面试邀约', userId: app_.seeker_id }); // 生成会议链接
-  await pool.query("UPDATE applications SET status='interview', meeting_link=?, updated_at=NOW() WHERE id=?", [meeting.url, req.params.id]); // 保存会议链接并更新状态
-  await pool.query(
-    `INSERT INTO interviews (application_id, job_id, seeker_id, company_id, scheduled_at, mode, link, status)
-     VALUES (?,?,?,?,?,?,?, 'pending')`,
-    [app_.id, app_.job_id, app_.seeker_id, app_.company_id, new Date(scheduledAt), mode === 'offline' ? 'offline' : 'online', meeting.url]
-  ); // 创建待确认的面试邀约
-  await pool.query(
-    'INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
-    [app_.id, req.user.id, 'interview', `发起面试邀约：${String(scheduledAt).replace('T', ' ')}`]
-  ); // 记录轨迹
-  const [jobRows] = await pool.query('SELECT title FROM jobs WHERE id=?', [app_.job_id]); // 查询职位标题
-  const title = jobRows[0].title; // 取职位标题
-  await notify(app_.seeker_id, 'interview',
-    `收到「${title}」面试邀约，时间 ${String(scheduledAt).replace('T', ' ')}，${mode === 'offline' ? '线下面试' : '会议平台：' + meeting.providerName + '，入会链接：' + meeting.url}${note ? '，备注：' + note : ''}`); // 通知求职者
-  send(res, true, meeting); // 返回会议信息
+  const body = req.body || {};
+  const scheduled = futureTime(body.scheduledAt);
+  const note = String(body.note || '').trim().slice(0, 120);
+  const meeting = await transaction(async (db) => {
+    const [rows] = await db.query('SELECT * FROM applications WHERE id = ? AND company_id = ? FOR UPDATE', [req.params.id, req.user.id]);
+    const application = rows[0];
+    if (!application) throw new BizError('投递记录不存在或无权限', 403);
+    if (['accepted', 'rejected'].includes(application.status)) throw new BizError('该投递已结束，不能继续邀请面试', 409);
+    const [pending] = await db.query("SELECT id FROM interviews WHERE application_id = ? AND status IN ('pending','rescheduled') LIMIT 1", [application.id]);
+    if (pending.length) throw new BizError('请先处理已有的待确认面试', 409);
+    const result = createMeeting({ provider: body.provider || 'tencent', topic: '面试邀约', userId: application.seeker_id });
+    const link = body.mode === 'offline' ? null : result.url;
+    await db.query("UPDATE applications SET status='interview', meeting_link=?, updated_at=NOW() WHERE id=?", [link, application.id]);
+    const [info] = await db.query(
+      `INSERT INTO interviews (application_id, job_id, seeker_id, company_id, scheduled_at, mode, link, company_note, status)
+       VALUES (?,?,?,?,?,?,?,?, 'pending')`,
+      [application.id, application.job_id, application.seeker_id, application.company_id, scheduled, body.mode === 'offline' ? 'offline' : 'online', link, note]
+    );
+    await db.query('INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
+      [application.id, req.user.id, 'interview', `面试 #${info.insertId}：邀请于 ${scheduled.toISOString()}，${note}`]);
+    const [jobs] = await db.query('SELECT title FROM jobs WHERE id = ?', [application.job_id]);
+    await notify(application.seeker_id, 'interview', `收到「${jobs[0].title}」面试邀约，请在我的面试确认时间与备注`, db);
+    return result;
+  });
+  send(res, true, meeting);
 }));
 
 // 发起交换联系方式请求
 app.post('/api/contact/request', requireAuth(), wrap(async (req, res) => {
   const { toUserId, jobId } = req.body || {}; // 解析请求参数
-  if (!toUserId) return send(res, false, '请选择接收方'); // 接收方必填
-  const [target] = await pool.query('SELECT * FROM users WHERE id = ?', [toUserId]); // 查询接收方
-  if (!target.length) return send(res, false, '接收方不存在'); // 校验接收方存在
+  if (!Number.isSafeInteger(Number(toUserId)) || Number(toUserId) <= 0 || Number(toUserId) === req.user.id) {
+    return send(res, false, '请选择有效的接收方');
+  }
+  const [target] = await pool.query("SELECT id, role FROM users WHERE id = ? AND status = 'active'", [toUserId]);
+  if (!target.length || !['seeker', 'company'].includes(req.user.role) ||
+      target[0].role !== (req.user.role === 'company' ? 'seeker' : 'company')) {
+    return send(res, false, '接收方不存在或不可联系');
+  }
   const [dup] = await pool.query(
     'SELECT id FROM contact_requests WHERE from_user_id=? AND to_user_id=? AND status=?',
     [req.user.id, toUserId, 'pending']
@@ -608,19 +722,21 @@ app.post('/api/contact/request', requireAuth(), wrap(async (req, res) => {
   if (dup.length) return send(res, false, '已有待处理的请求，请等待回复'); // 重复请求提示
   await pool.query('INSERT INTO contact_requests (from_user_id, to_user_id, job_id) VALUES (?,?,?)', [req.user.id, toUserId, jobId || null]); // 插入请求
   await notify(toUserId, 'contact', `${req.user.name} 请求交换联系方式`); // 通知接收方
-  send(res, true, '联系方式交换请求已发送'); // 返回提示
+  send(res, true, '联系方式交换请求已发送');
 }));
 
 // 查看联系方式请求（收到的待处理 + 已发送）
 app.get('/api/contact/requests', requireAuth(), wrap(async (req, res) => {
   const [mine] = await pool.query(
-    `SELECT cr.*, u.name AS user_name, u.company_name, u.role
+    `SELECT cr.*, u.name AS user_name, u.company_name, u.role,
+       CASE WHEN cr.status = 'accepted' AND u.status = 'active' THEN u.phone ELSE NULL END AS peer_phone
      FROM contact_requests cr JOIN users u ON u.id = cr.from_user_id
-     WHERE cr.to_user_id = ? AND cr.status = 'pending' ORDER BY cr.id DESC LIMIT 100`,
+     WHERE cr.to_user_id = ? ORDER BY cr.id DESC LIMIT 100`,
     [req.user.id]
   ); // 查询收到的待处理请求
   const [sent] = await pool.query(
-    `SELECT cr.*, u.name AS user_name, u.company_name, u.role
+    `SELECT cr.*, u.name AS user_name, u.company_name, u.role,
+       CASE WHEN cr.status = 'accepted' AND u.status = 'active' THEN u.phone ELSE NULL END AS peer_phone
      FROM contact_requests cr JOIN users u ON u.id = cr.to_user_id
      WHERE cr.from_user_id = ? ORDER BY cr.id DESC LIMIT 100`,
     [req.user.id]
@@ -649,20 +765,56 @@ app.get('/api/messages/threads', requireAuth(), wrap(async (req, res) => {
 }));
 
 // 站内聊天：读取与某人的会话记录（同时把对方发来的消息标记为已读）
-app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
-  const peerId = Number(req.params.userId); // 对方用户主键
-  if (!peerId) return send(res, false, '对方不存在'); // 参数校验
-  const [peer] = await pool.query('SELECT id, name, company_name, role FROM users WHERE id = ?', [peerId]); // 只取公开信息，手机号不随会话返回
-  if (!peer.length) return send(res, false, '对方不存在'); // 校验对方存在
+// GET /api/messages/contacts：聊天联系人列表（左侧会话列表）
+// 返回每个联系人的最后一条消息、未读数量与资料，供聊天面板使用
+app.get('/api/messages/contacts', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT id, from_user_id, to_user_id, content, created_at
-     FROM messages
-     WHERE (from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)
-     ORDER BY id ASC LIMIT 200`,
-    [req.user.id, peerId, peerId, req.user.id]
-  ); // 查询双向会话，按时间正序
-  await pool.query('UPDATE messages SET is_read = 1 WHERE to_user_id = ? AND from_user_id = ?', [req.user.id, peerId]); // 进入会话即标记已读
-  send(res, true, { peer: peer[0], messages: rows }); // 返回对方信息与消息列表
+    `SELECT m.*, 
+            IF(m.from_user_id = ?, m.to_user_id, m.from_user_id) AS peer_id,
+            u.name AS peer_name, u.company_name AS peer_company, u.role AS peer_role,
+            u.avatar_path AS peer_avatar
+     FROM messages m JOIN users u ON u.id = IF(m.from_user_id = ?, m.to_user_id, m.from_user_id)
+     WHERE (m.from_user_id = ? OR m.to_user_id = ?)
+     ORDER BY m.id DESC LIMIT 800`,
+    [req.user.id, req.user.id, req.user.id, req.user.id]
+  ); // 拉取与我相关的消息（倒序，便于取最新一条）
+  const map = new Map(); // 以对方 ID 聚合
+  for (const m of rows) {
+    const key = m.peer_id; // 对方用户 ID
+    if (!map.has(key)) { // 首次出现即最后一条
+      map.set(key, {
+        peer_id: key, peer_name: m.peer_name, peer_company: m.peer_company,
+        peer_role: m.peer_role, peer_avatar: m.peer_avatar,
+        last_content: m.content, last_at: m.created_at, unread: 0, // 最后一条与未读数
+      });
+    }
+    if (m.to_user_id === req.user.id && !m.is_read) map.get(key).unread += 1; // 统计未读
+  }
+  send(res, true, [...map.values()]); // 返回联系人列表
+}));
+
+app.get('/api/messages/:userId', requireAuth(), wrap(async (req, res) => {
+  const peerId = Number(req.params.userId);
+  const limit = Number(req.query.limit || 50);
+  const before = req.query.before === undefined ? null : Number(req.query.before);
+  if (!Number.isSafeInteger(peerId) || peerId < 1 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100 ||
+      (before !== null && (!Number.isSafeInteger(before) || before < 1))) return send(res, false, '消息分页参数不合法');
+  const [peer] = await pool.query('SELECT id, name, company_name, role FROM users WHERE id = ?', [peerId]);
+  if (!peer.length) return send(res, false, '对方不存在', 404);
+  const [rows] = await pool.query(
+    `SELECT id, from_user_id, to_user_id, content, created_at, is_read FROM messages
+     WHERE ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?))
+       ${before === null ? '' : 'AND id < ?'} ORDER BY id DESC LIMIT ?`,
+    [req.user.id, peerId, peerId, req.user.id, ...(before === null ? [] : [before]), limit + 1]
+  );
+  const hasMore = rows.length > limit;
+  const messages = rows.slice(0, limit).reverse();
+  const unread = messages.filter((message) => message.to_user_id === req.user.id && !message.is_read).map((message) => message.id);
+  if (unread.length) {
+    await pool.query(`UPDATE messages SET is_read = 1 WHERE to_user_id = ? AND id IN (${unread.map(() => '?').join(',')})`, [req.user.id, ...unread]);
+    messages.forEach((message) => { if (message.to_user_id === req.user.id) message.is_read = 1; });
+  }
+  send(res, true, { peer: peer[0], messages, hasMore, nextBefore: hasMore ? messages[0].id : null });
 }));
 
 // 站内聊天：发送消息
@@ -674,8 +826,9 @@ app.post('/api/messages', requireAuth(), limitBy('message', 30, 60 * 1000), wrap
   if (text.length > 500) return send(res, false, '消息过长（最多 500 字）'); // 长度限制
   const bannedMsg = hasBannedWord(text); // 敏感词检查
   if (bannedMsg) return send(res, false, '消息包含违规内容，请修改后再发送'); // 命中则拒绝
-  const [peer] = await pool.query('SELECT id, name FROM users WHERE id = ?', [toUserId]); // 查询接收方
-  if (!peer.length) return send(res, false, '对方不存在'); // 校验接收方存在
+  if (!Number.isSafeInteger(Number(toUserId)) || Number(toUserId) <= 0 || Number(toUserId) === req.user.id) return send(res, false, '接收方不合法');
+  const [peer] = await pool.query("SELECT id, name FROM users WHERE id = ? AND status = 'active'", [toUserId]);
+  if (!peer.length) return send(res, false, '对方不存在或账号不可用');
   const [info] = await pool.query(
     'INSERT INTO messages (from_user_id, to_user_id, job_id, content) VALUES (?,?,?,?)',
     [req.user.id, toUserId, jobId || null, text]
@@ -687,20 +840,23 @@ app.post('/api/messages', requireAuth(), limitBy('message', 30, 60 * 1000), wrap
 
 // POST /api/contact/requests/:id/respond：对方同意或拒绝交换联系方式
 app.post('/api/contact/requests/:id/respond', requireAuth(), wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM contact_requests WHERE id = ?', [req.params.id]); // 查询请求
-  const reqRow = rows[0]; // 取请求
-  if (!reqRow || reqRow.to_user_id !== req.user.id) return send(res, false, '请求不存在或无权限'); // 校验归属
-  const accept = req.body && req.body.accept; // 解析是否同意
-  const [from] = await pool.query('SELECT name, phone, company_name FROM users WHERE id=?', [reqRow.from_user_id]); // 查询请求发起方信息
-  const fromUser = from[0]; // 取发起方
-  await pool.query("UPDATE contact_requests SET status=? WHERE id=?", [accept ? 'accepted' : 'rejected', req.params.id]); // 更新请求状态
-  if (accept) { // 同意时交换联系方式
-    const msg = `联系方式已交换：${fromUser.name}${fromUser.company_name ? '（' + fromUser.company_name + '）' : ''}，电话 ${fromUser.phone || '未填写'}`; // 组装交换信息
-    await notify(reqRow.from_user_id, 'contact', msg); // 通知发起方
-    send(res, true, { message: '已同意，联系方式已告知对方' }); // 返回提示
-  } else { // 拒绝
-    send(res, true, '已拒绝该请求'); // 返回提示
-  }
+  const accept = req.body && req.body.accept;
+  if (typeof accept !== 'boolean') return send(res, false, '请选择同意或拒绝');
+  const result = await transaction(async (db) => {
+    const [rows] = await db.query('SELECT * FROM contact_requests WHERE id = ? AND to_user_id = ? FOR UPDATE', [req.params.id, req.user.id]);
+    const request = rows[0];
+    if (!request) throw new BizError('请求不存在或无权限', 403);
+    if (request.status !== 'pending') throw new BizError('该请求已处理', 409);
+    const [users] = await db.query("SELECT name, phone FROM users WHERE id = ? AND status = 'active'", [request.from_user_id]);
+    if (!users.length) throw new BizError('对方账号不可用');
+    await db.query('UPDATE contact_requests SET status = ? WHERE id = ?', [accept ? 'accepted' : 'rejected', request.id]);
+    if (accept) {
+      await notify(request.from_user_id, 'contact', `${req.user.name} 已同意交换联系方式，请在联系与沟通中查看`, db);
+      await notify(req.user.id, 'contact', `已与 ${users[0].name} 交换联系方式，请在联系与沟通中查看`, db);
+    }
+    return { message: accept ? '已同意，双方可查看对方联系方式' : '已拒绝该请求', phone: accept ? users[0].phone : null };
+  });
+  send(res, true, result);
 }));
 
 // 查看当前用户的通知列表
@@ -729,7 +885,7 @@ app.patch('/api/jobs/:id/republish', requireAuth(['company']), wrap(async (req, 
 // 管理员：查看企业注册列表
 app.get('/api/admin/companies', requireAuth(['admin']), wrap(async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT id, username, name, company_name, phone, status, license_path, avatar_path, created_at FROM users WHERE role='company' ORDER BY id DESC LIMIT 200"
+    "SELECT id, username, name, company_name, phone, status, reject_reason, license_path, avatar_path, created_at FROM users WHERE role='company' ORDER BY id DESC LIMIT 200"
   ); // 查询所有企业用户
   send(res, true, rows); // 返回企业列表
 }));
@@ -738,8 +894,10 @@ app.get('/api/admin/companies', requireAuth(['admin']), wrap(async (req, res) =>
 app.post('/api/admin/companies/:id/approve', requireAuth(['admin']), wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM users WHERE id=? AND role='company'", [req.params.id]); // 查询企业用户
   if (!rows.length) return send(res, false, '企业不存在'); // 校验存在性
-  await pool.query("UPDATE users SET status='active', verified=1 WHERE id=?", [req.params.id]); // 置为已通过并打认证标记
-  await notify(req.params.id, 'approve', '企业注册已通过审核，可以登录并发布职位'); // 通知企业
+  await transaction(async (db) => {
+    await db.query("UPDATE users SET status='active', verified=1, reject_reason=NULL WHERE id=?", [req.params.id]);
+    await notify(req.params.id, 'approve', '企业注册已通过审核，可以登录并发布职位', db);
+  });
   send(res, true, '企业注册已通过'); // 返回提示
 }));
 
@@ -886,11 +1044,12 @@ app.get('/api/resumes/:id/history', requireAuth(['seeker']), wrap(async (req, re
 // GET /api/favorites：我收藏的职位
 app.get('/api/favorites', requireAuth(['seeker']), wrap(async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT f.id AS fav_id, j.*, u.company_name AS company
+    `SELECT f.id AS fav_id, j.*, u.company_name AS company, u.status AS company_status
      FROM favorites f JOIN jobs j ON j.id = f.job_id JOIN users u ON u.id = j.company_id
      WHERE f.user_id = ? ORDER BY f.id DESC LIMIT 200`, [req.user.id]
-  ); // 联表取职位信息
-  send(res, true, rows); // 返回收藏列表
+  );
+  rows.forEach((row) => { if (row.company_status !== 'active') row.status = 'offline'; });
+  send(res, true, rows);
 }));
 
 // POST /api/favorites/:jobId：收藏/取消收藏（切换）
@@ -930,105 +1089,64 @@ app.get('/api/applications/:id/events', requireAuth(), wrap(async (req, res) => 
   send(res, true, events); // 返回轨迹
 }));
 
-// GET /api/interviews/mine：求职者的面试邀约
-app.get('/api/interviews/mine', requireAuth(['seeker']), wrap(async (req, res) => {
+app.get('/api/interviews/mine', requireAuth(['seeker', 'company']), wrap(async (req, res) => {
+  const owner = req.user.role === 'company' ? 'i.company_id' : 'i.seeker_id';
   const [rows] = await pool.query(
-    `SELECT i.*, j.title AS job_title, u.company_name AS company
-     FROM interviews i LEFT JOIN jobs j ON j.id = i.job_id LEFT JOIN users u ON u.id = i.company_id
-     WHERE i.seeker_id = ? ORDER BY i.id DESC LIMIT 100`, [req.user.id]
-  ); // 联表取职位与企业名
-  send(res, true, rows); // 返回面试列表
+    `SELECT i.*, j.title AS job_title, u.company_name AS company, s.name AS candidate
+     FROM interviews i LEFT JOIN jobs j ON j.id = i.job_id
+     LEFT JOIN users u ON u.id = i.company_id LEFT JOIN users s ON s.id = i.seeker_id
+     WHERE ${owner} = ? ORDER BY i.id DESC LIMIT 100`, [req.user.id]
+  );
+  send(res, true, rows);
 }));
 
-// POST /api/interviews/:id/respond：求职者确认 / 拒绝 / 改约
 app.post('/api/interviews/:id/respond', requireAuth(['seeker']), wrap(async (req, res) => {
-  const { action, note, newTime } = req.body || {}; // 动作、备注、改约时间
-  const [rows] = await pool.query('SELECT * FROM interviews WHERE id = ? AND seeker_id = ?', [req.params.id, req.user.id]); // 校验归属
-  const itv = rows[0];
-  if (!itv) return send(res, false, '面试邀约不存在或无权限', 403);
-  if (!['confirm', 'decline', 'reschedule'].includes(action)) return send(res, false, '操作不合法'); // 动作白名单
-  const map = { confirm: 'confirmed', decline: 'declined', reschedule: 'rescheduled' }; // 状态映射
-  if (action === 'reschedule') {
-    if (!newTime) return send(res, false, '请选择改约时间'); // 改约必须给时间
-    await pool.query('UPDATE interviews SET status=?, scheduled_at=?, seeker_note=? WHERE id=?',
-      [map[action], new Date(newTime), note || null, itv.id]); // 更新为新时间
-  } else {
-    await pool.query('UPDATE interviews SET status=?, seeker_note=? WHERE id=?', [map[action], note || null, itv.id]);
-  }
-  await pool.query('INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
-    [itv.application_id, req.user.id, 'interview_' + action, note || '']); // 记录轨迹
-  const text = { confirm: '已确认', decline: '已拒绝', reschedule: '申请改约至 ' + String(newTime || '').replace('T', ' ') }[action]; // 通知文案
-  await notify(itv.company_id, 'interview', `候选人${text}`); // 通知企业
-  send(res, true, '已提交'); // 返回结果
+  const { action, newTime } = req.body || {};
+  const note = String((req.body || {}).note || '').trim().slice(0, 120);
+  if (!['confirm', 'decline', 'reschedule'].includes(action)) return send(res, false, '操作不合法');
+  const proposed = action === 'reschedule' ? futureTime(newTime) : null;
+  await transaction(async (db) => {
+    const [rows] = await db.query('SELECT * FROM interviews WHERE id = ? AND seeker_id = ? FOR UPDATE', [req.params.id, req.user.id]);
+    const interview = rows[0];
+    if (!interview) throw new BizError('面试邀约不存在或无权限', 403);
+    const allowed = { pending: ['confirm', 'decline', 'reschedule'], confirmed: ['decline', 'reschedule'], rescheduled: ['decline'] };
+    if (!(allowed[interview.status] || []).includes(action)) throw new BizError('当前面试状态不允许此操作', 409);
+    if (action === 'confirm') futureTime(new Date(interview.scheduled_at).toISOString());
+    const status = { confirm: 'confirmed', decline: 'declined', reschedule: 'rescheduled' }[action];
+    await db.query('UPDATE interviews SET status=?, proposed_at=?, seeker_note=? WHERE id=?', [status, proposed, note, interview.id]);
+    const time = new Date(interview.scheduled_at).toISOString();
+    const detail = action === 'reschedule' ? `申请从 ${time} 改约至 ${proposed.toISOString()}` : `${action === 'confirm' ? '确认' : '拒绝'} ${time}`;
+    await db.query('INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
+      [interview.application_id, req.user.id, 'interview_' + action, `面试 #${interview.id}：${detail}，${note}`]);
+    await notify(interview.company_id, 'interview', `${req.user.name} 对面试 #${interview.id} ${detail}，请在面试管理查看`, db);
+  });
+  send(res, true, '已提交');
 }));
 
-// ===================== 账号体系：手机验证码 / 找回密码 =====================
-
-// genCode：生成 6 位数字验证码
-function genCode() {
-  return String(Math.floor(100000 + Math.random() * 900000));
-}
-
-// saveCode：把验证码写入 sms_codes，5 分钟有效
-async function saveCode(phone, purpose) {
-  const code = genCode(); // 生成验证码
-  await pool.query(
-    'INSERT INTO sms_codes (phone, code, purpose, expires_at) VALUES (?,?,?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))',
-    [phone, code, purpose]
-  ); // 落库
-  return code; // 返回验证码（演示环境直接回显）
-}
-
-// checkCode：校验验证码并标记已用
-async function checkCode(phone, purpose, code) {
-  const [rows] = await pool.query(
-    `SELECT id FROM sms_codes WHERE phone = ? AND purpose = ? AND code = ? AND used = 0 AND expires_at > NOW()
-     ORDER BY id DESC LIMIT 1`,
-    [phone, purpose, String(code || '')]
-  ); // 查未使用且未过期的验证码
-  if (!rows.length) return false; // 校验失败
-  await pool.query('UPDATE sms_codes SET used = 1 WHERE id = ?', [rows[0].id]); // 标记已用，防止重放
-  return true; // 校验通过
-}
-
-// POST /api/auth/code：发送验证码（演示环境不下发短信，直接把验证码返回给前端）
-app.post('/api/auth/code', wrap(async (req, res) => {
-  const { phone, purpose } = req.body || {}; // 手机号与用途
-  if (!/^1\d{10}$/.test(String(phone || ''))) return send(res, false, '请输入正确的手机号'); // 格式校验
-  if (!['register', 'reset'].includes(purpose)) return send(res, false, '用途不合法'); // 用途白名单
-  if (purpose === 'register') { // 注册时要保证手机号没被占用
-    const [dup] = await pool.query('SELECT id FROM users WHERE phone = ?', [phone]);
-    if (dup.length) return send(res, false, '该手机号已注册');
-  }
-  const code = await saveCode(phone, purpose); // 生成并保存
-  send(res, true, { phone, code, tip: '演示环境未接入短信网关，验证码直接返回' }); // 返回验证码
+app.post('/api/interviews/:id/review', requireAuth(['company']), wrap(async (req, res) => {
+  const { action } = req.body || {};
+  const note = String((req.body || {}).note || '').trim().slice(0, 120);
+  if (!['accept', 'reject'].includes(action)) return send(res, false, '操作不合法');
+  await transaction(async (db) => {
+    const [rows] = await db.query('SELECT * FROM interviews WHERE id = ? AND company_id = ? FOR UPDATE', [req.params.id, req.user.id]);
+    const interview = rows[0];
+    if (!interview) throw new BizError('面试邀约不存在或无权限', 403);
+    if (interview.status !== 'rescheduled' || !interview.proposed_at) throw new BizError('没有待处理的改约申请', 409);
+    const scheduled = futureTime(new Date(action === 'accept' ? interview.proposed_at : interview.scheduled_at).toISOString());
+    await db.query('UPDATE interviews SET status=?, scheduled_at=?, proposed_at=NULL, company_note=? WHERE id=?',
+      [action === 'accept' ? 'confirmed' : 'pending', scheduled, note, interview.id]);
+    const detail = `${action === 'accept' ? '接受' : '拒绝'}改约（${new Date(interview.scheduled_at).toISOString()} → ${new Date(interview.proposed_at).toISOString()}）`;
+    await db.query('INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
+      [interview.application_id, req.user.id, 'interview_review', `面试 #${interview.id}：${detail}，${note}`]);
+    await notify(interview.seeker_id, 'interview', `${req.user.company_name} ${detail}，请在我的面试查看`, db);
+  });
+  send(res, true, '改约申请已处理');
 }));
 
-// POST /api/auth/forgot：忘记密码，给注册手机号发送验证码
-app.post('/api/auth/forgot', wrap(async (req, res) => {
-  const { username } = req.body || {}; // 用户名
-  const [rows] = await pool.query('SELECT id, phone FROM users WHERE username = ?', [username || '']); // 查用户
-  const user = rows[0];
-  if (!user || !user.phone) return send(res, false, '该账号未绑定手机号，请联系管理员重置'); // 没有手机号无法自助找回
-  const code = await saveCode(user.phone, 'reset'); // 生成重置验证码
-  const masked = String(user.phone).replace(/^(\d{3})\d{4}(\d{4})$/, '$1****$2'); // 手机号脱敏
-  send(res, true, { phone: masked, code, tip: '演示环境未接入短信网关，验证码直接返回' }); // 返回验证码
-}));
-
-// POST /api/auth/reset：用验证码重置密码
-app.post('/api/auth/reset', wrap(async (req, res) => {
-  const { username, code, newPassword } = req.body || {}; // 参数
-  if (!newPassword || newPassword.length < 4 || newPassword.length > 8) {
-    return send(res, false, '密码需为 4~8 位'); // 长度校验
-  }
-  const [rows] = await pool.query('SELECT id, phone FROM users WHERE username = ?', [username || '']); // 查用户
-  const user = rows[0];
-  if (!user) return send(res, false, '账号不存在'); // 账号校验
-  if (!(await checkCode(user.phone, 'reset', code))) return send(res, false, '验证码错误或已过期'); // 验证码校验
-  await pool.query('UPDATE users SET password = ? WHERE id = ?', [hashPassword(newPassword), user.id]); // 更新密码
-  await pool.query('DELETE FROM sessions WHERE user_id = ?', [user.id]); // 吊销所有旧会话
-  send(res, true, '密码已重置，请重新登录'); // 返回结果
-}));
+// 没有真实身份验证通道时必须关闭找回，不能用回显验证码代替身份验证。
+app.post(['/api/auth/code', '/api/auth/forgot', '/api/auth/reset'], (req, res) => {
+  send(res, false, '短信验证与自助找回尚未启用，请联系平台管理员核验身份', 503);
+});
 
 // ===================== 企业资料与认证 =====================
 
@@ -1046,13 +1164,19 @@ app.get('/api/company/profile', requireAuth(['company']), wrap(async (req, res) 
 app.patch('/api/company/profile', requireAuth(['company']), wrap(async (req, res) => {
   const b = req.body || {}; // 请求体
   const companyName = String(b.companyName || '').trim().slice(0, 128); // 公司名
-  if (!companyName) return send(res, false, '公司名称不能为空'); // 必填
+  if (!companyName) return send(res, false, '公司名称不能为空');
+  const phone = String(b.phone || '').trim();
+  if (phone && !/^1\d{10}$/.test(phone)) return send(res, false, '手机号格式不正确');
+  if (phone) {
+    const [duplicate] = await pool.query('SELECT id FROM users WHERE phone = ? AND id <> ?', [phone, req.user.id]);
+    if (duplicate.length) return send(res, false, '该手机号已被使用');
+  }
   let avatarPath = null;
   if (b.avatarBase64) avatarPath = await saveImage(b.avatarName || 'avatar.png', b.avatarBase64); // 可选头像
   await pool.query(
     `UPDATE users SET company_name=?, name=?, phone=?, company_intro=?, company_industry=?,
        company_size=?, company_address=?, avatar_path=COALESCE(?, avatar_path) WHERE id=?`,
-    [companyName, String(b.contact || '').trim().slice(0, 64), String(b.phone || '').trim().slice(0, 32),
+    [companyName, String(b.contact || '').trim().slice(0, 64), phone || null,
      String(b.intro || '').slice(0, 2000), String(b.industry || '').slice(0, 32),
      String(b.size || '').slice(0, 32), String(b.address || '').slice(0, 64), avatarPath, req.user.id]
   ); // 更新资料
@@ -1099,9 +1223,11 @@ app.post('/api/admin/companies/:id/reject', requireAuth(['admin']), wrap(async (
   if (!reason) return send(res, false, '请填写驳回理由'); // 理由必填
   const [rows] = await pool.query("SELECT id FROM users WHERE id = ? AND role = 'company'", [req.params.id]); // 校验企业
   if (!rows.length) return send(res, false, '企业不存在');
-  await pool.query("UPDATE users SET status='banned', reject_reason=? WHERE id=?", [reason, req.params.id]); // 置为驳回并记录理由
-  await pool.query('DELETE FROM sessions WHERE user_id = ?', [req.params.id]); // 吊销会话
-  await notify(req.params.id, 'approve', `企业注册未通过审核，原因：${reason}。请修改后联系管理员重新提交。`); // 通知企业
+  await transaction(async (db) => {
+    await db.query("UPDATE users SET status='banned', verified=0, reject_reason=? WHERE id=?", [reason, req.params.id]);
+    await db.query('DELETE FROM sessions WHERE user_id = ?', [req.params.id]);
+    await notify(req.params.id, 'approve', `企业注册未通过审核，原因：${reason}。请联系管理员补交资料后重新审核。`, db);
+  });
   send(res, true, '已驳回并通知企业'); // 返回结果
 }));
 
@@ -1115,7 +1241,7 @@ app.get('/api/company/reject-reason', requireAuth(['company']), wrap(async (req,
 app.get('/api/company/:id', requireAuth(), wrap(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT id, company_name, company_intro, company_industry, company_size, company_address, verified, name
-     FROM users WHERE id = ? AND role = 'company'`, [req.params.id]
+     FROM users WHERE id = ? AND role = 'company' AND status = 'active'`, [req.params.id]
   ); // 只返回公开字段
   if (!rows.length) return send(res, false, '企业不存在');
   const [jobs] = await pool.query(
@@ -1158,7 +1284,7 @@ app.get('/api/recommend/jobs', requireAuth(['seeker']), wrap(async (req, res) =>
   if (!resume) return send(res, true, []); // 没有简历就没有推荐
   const [jobs] = await pool.query(
     `SELECT j.*, u.company_name AS company, u.verified FROM jobs j JOIN users u ON u.id = j.company_id
-     WHERE j.status = 'published' ORDER BY j.id DESC LIMIT 200`
+     WHERE j.status = 'published' AND u.status = 'active' AND u.role = 'company' ORDER BY j.id DESC LIMIT 200`
   ); // 取候选职位
   const scored = jobs.map((j) => ({ ...j, match: matchScore(resume, j) })) // 逐个打分
     .sort((a, b) => b.match.score - a.match.score) // 按分数降序
@@ -1182,12 +1308,15 @@ app.get('/api/recommend/talent', requireAuth(['company']), wrap(async (req, res)
 
 // GET /api/jobs/:id/similar：相似职位（同地点或技能重合）
 app.get('/api/jobs/:id/similar', wrap(async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 当前职位
+  const [rows] = await pool.query(
+    `SELECT j.* FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE j.id = ? AND j.status = 'published' AND u.status = 'active' AND u.role = 'company'`, [req.params.id]
+  );
   const job = rows[0];
   if (!job) return send(res, false, '职位不存在');
   const [list] = await pool.query(
     `SELECT j.*, u.company_name AS company FROM jobs j JOIN users u ON u.id = j.company_id
-     WHERE j.status = 'published' AND j.id <> ? AND (j.location = ? OR j.title LIKE ?)
+     WHERE j.status = 'published' AND u.status = 'active' AND u.role = 'company' AND j.id <> ? AND (j.location = ? OR j.title LIKE ?)
      ORDER BY j.id DESC LIMIT 6`,
     [job.id, job.location || '', `%${(job.title || '').slice(0, 2)}%`]
   ); // 同城或标题相近的职位
@@ -1268,7 +1397,11 @@ app.get('/api/admin/export', requireAuth(['admin']), wrap(async (req, res) => {
   if (!map[type]) return send(res, false, '导出类型不支持');
   const [rows] = await pool.query(map[type]); // 查询数据
   const headers = rows.length ? Object.keys(rows[0]) : []; // 表头
-  const cell = (v) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`; // CSV 转义
+  const cell = (value) => {
+    let text = String(value ?? '');
+    if (typeof value === 'string' && (/^\s*[=+@-]/.test(text) || /^[\t\r\n]/.test(text))) text = "'" + text;
+    return `"${text.replace(/"/g, '""')}"`;
+  };
   const csv = '\uFEFF' + [headers.join(','), ...rows.map((r) => headers.map((h) => cell(r[h])).join(','))].join('\n'); // 加 BOM 便于 Excel 识别中文
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="addwork-${type}.csv"`);
@@ -1315,13 +1448,143 @@ app.get('/healthz', wrap(async (req, res) => {
   res.json({ ok: true, db: rows[0].ok === 1, uptime: Math.round(process.uptime()) }); // 返回运行状态
 }));
 
-// 服务启动：先初始化数据库与种子数据，再监听端口
-init().then(() => {
-  app.listen(PORT, () => {
-    console.log(`add-work 招聘系统已启动： http://localhost:${PORT}`); // 输出启动地址
-    console.log(`上传文件存储模式： ${FILE_MODE}`); // 输出当前存储模式，便于排查文件丢失问题
+
+// ===================== 紧急修复批：重复投递 / 企业归档 / 聊天联系人 / 管理端 CRUD =====================
+
+// DELETE /api/applications/:id：企业端删除收到的简历（软删除，保留审计）
+app.delete('/api/applications/:id', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT id FROM applications WHERE id = ? AND company_id = ?', [req.params.id, req.user.id]); // 校验归属
+  if (!rows.length) return send(res, false, '投递记录不存在'); // 不存在或无权
+  await pool.query('UPDATE applications SET deleted = 1 WHERE id = ?', [req.params.id]); // 软删除
+  await pool.query(
+    'INSERT INTO app_events (application_id, actor_id, action, detail) VALUES (?,?,?,?)',
+    [req.params.id, req.user.id, 'deleted', '企业端删除该投递记录']
+  ); // 记录操作轨迹
+  send(res, true, '已删除'); // 返回结果
+}));
+
+// GET /api/applications/received/stats：企业端各状态的归档数量
+app.get('/api/applications/received/stats', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT status, COUNT(*) AS c FROM applications
+     WHERE company_id = ? AND deleted = 0 GROUP BY status`, [req.user.id]
+  ); // 按状态分组统计
+  const counts = { all: 0, submitted: 0, viewed: 0, interview: 0, accepted: 0, rejected: 0 }; // 默认值
+  rows.forEach((r) => { counts[r.status] = Number(r.c); counts.all += Number(r.c); }); // 累加
+  send(res, true, counts); // 返回计数
+}));
+
+// ===================== 管理端：用户 / 企业 / 职位的增删改查 =====================
+
+// GET /api/admin/users/manage：用户管理列表（支持关键字与角色筛选）
+app.get('/api/admin/users/manage', requireAuth(['admin']), wrap(async (req, res) => {
+  const kw = String(req.query.keyword || '').trim(); // 关键字
+  const role = String(req.query.role || '').trim(); // 角色筛选
+  const where = ['1=1']; // 条件
+  const args = []; // 参数
+  if (kw) { where.push('(username LIKE ? OR name LIKE ? OR company_name LIKE ?)'); const like = `%${kw}%`; args.push(like, like, like); }
+  if (['seeker', 'company', 'admin'].includes(role)) { where.push('role = ?'); args.push(role); }
+  const [rows] = await pool.query(
+    `SELECT id, username, role, name, company_name, phone, status, verified, created_at
+     FROM users WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT 200`, args
+  ); // 查询用户
+  send(res, true, rows); // 返回列表
+}));
+
+// PATCH /api/admin/users/:id：修改用户资料或状态（管理员不可被修改）
+app.patch('/api/admin/users/:id', requireAuth(['admin']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.params.id]); // 查询用户
+  if (!rows.length) return send(res, false, '用户不存在');
+  if (rows[0].role === 'admin') return send(res, false, '不能修改管理员账号'); // 保护管理员
+  const { status, name, role, verified } = req.body || {}; // 可改字段
+  if (status && !['active', 'pending', 'banned'].includes(status)) return send(res, false, '状态不合法'); // 校验状态
+  if (role && !['seeker', 'company'].includes(role)) return send(res, false, '角色不合法'); // 校验角色
+  await pool.query(
+    'UPDATE users SET status = COALESCE(?, status), name = COALESCE(?, name), role = COALESCE(?, role), verified = COALESCE(?, verified) WHERE id = ?',
+    [status || null, name || null, role || null, verified === undefined ? null : (verified ? 1 : 0), req.params.id]
+  ); // 更新字段
+  if (status && status !== 'active') await pool.query('DELETE FROM sessions WHERE user_id = ?', [req.params.id]); // 停用即刻下线
+  send(res, true, '用户已更新');
+}));
+
+// DELETE /api/admin/users/:id：删除用户及其关联数据
+app.delete('/api/admin/users/:id', requireAuth(['admin']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT id, role FROM users WHERE id = ?', [req.params.id]); // 查询用户
+  if (!rows.length) return send(res, false, '用户不存在');
+  if (rows[0].role === 'admin') return send(res, false, '不能删除管理员账号'); // 保护管理员
+  const uid = req.params.id; // 目标用户
+  await transaction(async (db) => {
+    await db.query('DELETE FROM app_events WHERE application_id IN (SELECT id FROM applications WHERE seeker_id = ? OR company_id = ?)', [uid, uid]); // 轨迹
+    await db.query('DELETE FROM applications WHERE seeker_id = ? OR company_id = ?', [uid, uid]); // 投递
+    await db.query('DELETE FROM interviews WHERE seeker_id = ? OR company_id = ?', [uid, uid]); // 面试
+    await db.query('DELETE FROM favorites WHERE user_id = ?', [uid]); // 收藏
+    await db.query('DELETE FROM follows WHERE user_id = ? OR company_id = ?', [uid, uid]); // 关注
+    await db.query('DELETE FROM contact_requests WHERE from_user_id = ? OR to_user_id = ?', [uid, uid]); // 联系请求
+    await db.query('DELETE FROM messages WHERE from_user_id = ? OR to_user_id = ?', [uid, uid]); // 消息
+    await db.query('DELETE FROM notifications WHERE user_id = ?', [uid]); // 通知
+    await db.query('DELETE FROM sessions WHERE user_id = ?', [uid]); // 会话
+    await db.query('DELETE FROM resumes WHERE user_id = ?', [uid]); // 简历
+    await db.query('DELETE FROM jobs WHERE company_id = ?', [uid]); // 职位（仅企业有）
+    await db.query('DELETE FROM users WHERE id = ?', [uid]); // 用户本体
   });
-}).catch((err) => {
-  console.error('数据库初始化失败：', err.message); // 输出初始化错误
-  process.exit(1); // 初始化失败则退出进程
-});
+  send(res, true, '用户已删除');
+}));
+
+// GET /api/admin/jobs/manage：职位管理列表（关键字与状态筛选）
+app.get('/api/admin/jobs/manage', requireAuth(['admin']), wrap(async (req, res) => {
+  const kw = String(req.query.keyword || '').trim(); // 关键字
+  const status = String(req.query.status || '').trim(); // 状态
+  const where = ['1=1']; const args = [];
+  if (kw) { where.push('(j.title LIKE ? OR u.company_name LIKE ?)'); const like = `%${kw}%`; args.push(like, like); }
+  if (['published', 'offline'].includes(status)) { where.push('j.status = ?'); args.push(status); }
+  const [rows] = await pool.query(
+    `SELECT j.id, j.title, j.location, j.salary_min, j.salary_max, j.status, j.is_top, j.is_urgent,
+            j.view_count, j.created_at, u.company_name,
+            (SELECT COUNT(*) FROM applications a WHERE a.job_id = j.id AND a.deleted = 0) AS apply_count
+     FROM jobs j JOIN users u ON u.id = j.company_id
+     WHERE ${where.join(' AND ')} ORDER BY j.id DESC LIMIT 200`, args
+  ); // 查询职位
+  send(res, true, rows);
+}));
+
+// PATCH /api/admin/jobs/:id：管理员改职位状态或置顶/急招
+app.patch('/api/admin/jobs/:id', requireAuth(['admin']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT * FROM jobs WHERE id = ?', [req.params.id]); // 校验职位
+  if (!rows.length) return send(res, false, '职位不存在');
+  const { status, isTop, isUrgent } = req.body || {}; // 可改字段
+  if (status && !['published', 'offline'].includes(status)) return send(res, false, '状态不合法');
+  await pool.query(
+    'UPDATE jobs SET status = COALESCE(?, status), is_top = COALESCE(?, is_top), is_urgent = COALESCE(?, is_urgent) WHERE id = ?',
+    [status || null, isTop === undefined ? null : (isTop ? 1 : 0), isUrgent === undefined ? null : (isUrgent ? 1 : 0), req.params.id]
+  ); // 更新
+  send(res, true, '职位已更新');
+}));
+
+// DELETE /api/admin/jobs/:id：管理员删除职位及其投递记录
+app.delete('/api/admin/jobs/:id', requireAuth(['admin']), wrap(async (req, res) => {
+  const [rows] = await pool.query('SELECT id FROM jobs WHERE id = ?', [req.params.id]); // 校验职位
+  if (!rows.length) return send(res, false, '职位不存在');
+  const jid = req.params.id;
+  await transaction(async (db) => {
+    await db.query('DELETE FROM app_events WHERE application_id IN (SELECT id FROM applications WHERE job_id = ?)', [jid]);
+    await db.query('DELETE FROM applications WHERE job_id = ?', [jid]);
+    await db.query('DELETE FROM interviews WHERE job_id = ?', [jid]);
+    await db.query('DELETE FROM favorites WHERE job_id = ?', [jid]);
+    await db.query('DELETE FROM jobs WHERE id = ?', [jid]);
+  });
+  send(res, true, '职位已删除');
+}));
+
+if (require.main === module) {
+  init().then(() => {
+    app.listen(PORT, () => {
+      console.log(`add-work 招聘系统已启动： http://localhost:${PORT}`);
+      console.log(`上传文件存储模式： ${FILE_MODE}`);
+    });
+  }).catch((err) => {
+    console.error('数据库初始化失败：', err.message);
+    process.exit(1);
+  });
+}
+
+module.exports = app;
