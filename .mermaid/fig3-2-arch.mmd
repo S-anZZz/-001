@@ -1,0 +1,7 @@
+flowchart LR
+  U["浏览器<br/>HTML/CSS/JS"] -->|HTTPS| P["统一入口<br/>Tomcat :8081 / Render"]
+  P -->|"静态资源"| ST["index.html<br/>app.js · style.css"]
+  P -->|"/api/* · /uploads/*"| N["Node.js + Express<br/>路由 · 会话 · 鉴权"]
+  N -->|"SQL（TLS）"| DB[("MySQL / TiDB<br/>add_work")]
+  N -->|"FILE_STORAGE=db"| F[("文件表 files")]
+  N --> L["操作日志<br/>app_events / operation_logs"]

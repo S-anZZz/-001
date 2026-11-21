@@ -13,3 +13,16 @@ _report/.venv/
 _report/figs/*.png
 _report/figs/*.pdf
 _report/*.bak
+
+# 本地工具与临时目录（与 addwork 运行无关）
+.agents/
+.venv-astro/
+skills-lock.json
+.npm-cache/
+.tools/
+.local/
+.mavis/
+.astro/
+.mermaid/mermaid.min.js
+.mermaid/*.html
+.mermaid/*.png

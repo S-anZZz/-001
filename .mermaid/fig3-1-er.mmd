@@ -1,0 +1,53 @@
+erDiagram
+  users ||--o{ resumes : "拥有"
+  users ||--o{ jobs : "发布"
+  users ||--o{ applications : "作为求职者"
+  users ||--o{ messages : "收发"
+  users ||--o{ favorites : "收藏"
+  users ||--o{ follows : "关注"
+  users ||--o{ notifications : "接收"
+  jobs ||--o{ applications : "收到投递"
+  resumes ||--o{ applications : "关联简历"
+  applications ||--o{ interviews : "产生面试"
+  applications ||--o{ app_events : "产生轨迹"
+
+  users {
+    int id PK
+    varchar username
+    varchar role
+    varchar status
+    varchar phone
+    varchar license_path
+  }
+  resumes {
+    int id PK
+    int user_id FK
+    varchar skills
+    varchar visibility
+    int is_default
+    varchar attachment_path
+  }
+  jobs {
+    int id PK
+    int company_id FK
+    varchar title
+    int salary_min
+    varchar job_type
+    varchar status
+    int is_top
+  }
+  applications {
+    int id PK
+    int job_id FK
+    int seeker_id FK
+    varchar status
+    int match_score
+    int apply_count
+    tinyint deleted
+  }
+  interviews {
+    int id PK
+    int application_id FK
+    datetime scheduled_at
+    varchar status
+  }
