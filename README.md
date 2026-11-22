@@ -362,7 +362,8 @@ add work/
 │   ├── app.js                前端全部交互逻辑（单页应用，无框架）
 │   ├── style.css             黑白设计系统：变量、布局、表格、弹窗
 │   ├── terms.html            用户协议与隐私政策
-│   └── bg.webp               全局背景图（1920×1080，约 105KB）
+│   ├── motion.js             首页文字动效（逐字浮现 / 打字机 / 线条展开）
+│   └── plus-particles.js     收尾区块的粒子十字
 ├── sql/
 │   └── db_objects.sql        视图 / 存储过程 / 存储函数 / 触发器脚本
 ├── tomcat/                   本地 Tomcat 部署（前端托管 + 反向代理）
@@ -388,7 +389,6 @@ add work/
 | `public/app.js` | 前端单页应用逻辑 | `api()` 请求封装、`PANELS` 页签注册表、各面板渲染函数、表单提交、聊天、附件预览、简历编辑器 |
 | `public/style.css` | 视觉样式 | 设计变量（`--ink/--line/--head`）、布局、卡片、表格、表单、弹窗、状态徽章、响应式 |
 | `public/terms.html` | 合规页面 | 信息采集范围、简历可见性、数据用途、用户权利说明 |
-| `public/bg.webp` | 全局背景 | 被 `style.css` 的 `body` 引用，配合半透明遮罩保证文字可读 |
 | `sql/db_objects.sql` | 数据库对象脚本 | 3 个统计视图、2 个存储过程、`fn_salary_text()` 与 6 参数 `fn_match_score()`、用户状态变更触发器 |
 | `tomcat/start.sh` / `stop.sh` | 本地 Tomcat 部署脚本 | 检测 MySQL、拉起 Node 后端、以自定义 `CATALINA_BASE` 启动 Tomcat 并轮询就绪 |
 | `tomcat/README.md` | Tomcat 部署说明 | 架构图、目录结构、编译反代 Servlet 的命令、验证清单 |

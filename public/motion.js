@@ -184,7 +184,7 @@
   // 兜底轮询：某些嵌入环境（iframe / 无头浏览器）不派发 scroll，靠位置变化补上
   let lastY = window.scrollY;
   let lastH = window.innerHeight;
-  setInterval(() => {
+  let pollTimer = setInterval(() => {
     if (document.hidden) return;                       // 页面不可见时不计算
     if (window.scrollY === lastY && window.innerHeight === lastH) return;
     lastY = window.scrollY;
@@ -192,6 +192,11 @@
     evaluate();
     if (typeof window.__paintRule === 'function') window.__paintRule();  // 顺带推进顶部滚动线
   }, 120);
+
+  // 真实浏览器会派发 scroll，收到后即可停掉轮询
+  window.addEventListener('scroll', () => {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }, { passive: true, once: true });
 
   // 首屏评估放在线条注册之后，保证首屏的分隔线也能立刻展开
   evaluate();
@@ -275,6 +280,9 @@
   ].join(', ');
   document.querySelectorAll(lineSelector).forEach((el) => {
     el.classList.add('line-draw');
+    // 本身带下边框的元素：隐藏原生边框，只保留动画绘制的那条线，避免叠成两根
+    const style = window.getComputedStyle(el);
+    if (parseFloat(style.borderBottomWidth) > 0) el.classList.add('line-draw--border');
     lineEls.push(el);
   });
 
