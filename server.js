@@ -1451,6 +1451,29 @@ app.get('/healthz', wrap(async (req, res) => {
 
 // ===================== 紧急修复批：重复投递 / 企业归档 / 聊天联系人 / 管理端 CRUD =====================
 
+
+// GET /api/applications/:id/resume：企业查看候选人完整简历（不改变投递状态）
+app.get('/api/applications/:id/resume', requireAuth(['company']), wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT a.id, a.status, a.match_score, a.match_reasons, a.apply_count, a.job_id,
+            r.name, r.title, r.skills, r.experience, r.education, r.self_eval,
+            r.project_exp, r.edu_exp, r.expected_city, r.expected_salary_min, r.expected_salary_max,
+            r.available_time, r.job_status, r.visibility, r.attachment_name, r.attachment_path,
+            u.name AS seeker_name, u.status AS seeker_status, j.title AS job_title
+     FROM applications a
+     JOIN resumes r ON r.id = a.resume_id
+     JOIN users u ON u.id = a.seeker_id
+     JOIN jobs j ON j.id = a.job_id
+     WHERE a.id = ? AND a.company_id = ? AND a.deleted = 0`, [req.params.id, req.user.id]
+  ); // 只允许查看投递给本企业的记录
+  if (!rows.length) return send(res, false, '投递记录不存在');
+  const row = rows[0];
+  if (row.visibility === 'hidden' || row.seeker_status !== 'active') {
+    return send(res, true, { id: row.id, candidate: '简历不可见', visibility: row.visibility, job_title: row.job_title, status: row.status });
+  } // 简历隐藏或账号停用时不返回内容
+  send(res, true, row);
+}));
+
 // DELETE /api/applications/:id：企业端删除收到的简历（软删除，保留审计）
 app.delete('/api/applications/:id', requireAuth(['company']), wrap(async (req, res) => {
   const [rows] = await pool.query('SELECT id FROM applications WHERE id = ? AND company_id = ?', [req.params.id, req.user.id]); // 校验归属

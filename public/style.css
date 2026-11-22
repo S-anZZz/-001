@@ -1024,3 +1024,10 @@ body:not([data-view="landing"]) .scroll-rule { display: none; }
 
 /* 带原生下边框的线条：隐藏原生边框，只显示动画绘制的那一条 */
 .line-draw--border { border-bottom-color: transparent; }
+
+/* ---------- 企业端简历详情弹窗 ---------- */
+.resume-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 16px; margin: 12px 0 4px; }
+.resume-grid > div { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; background: var(--ink-050); border-radius: 4px; }
+.resume-grid span { font-size: 11px; color: var(--ink-500); }
+.resume-grid b { font-size: 13px; font-weight: 600; }
+@media (max-width: 720px) { .resume-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

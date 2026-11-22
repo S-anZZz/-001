@@ -393,12 +393,12 @@ PANELS.home = async (p) => {
         <div class="card-head">招聘看板</div>
         <div class="card-body">
           <div class="stat-grid company-stats">
-            <div class="stat-card">职位总数<b>${d.jobs.total || 0}</b></div>
-            <div class="stat-card">在招职位<b>${d.jobs.published || 0}</b></div>
-            <div class="stat-card">职位曝光<b>${d.jobs.views || 0}</b></div>
-            <div class="stat-card">收到投递<b>${d.apps.total || 0}</b></div>
-            <div class="stat-card">待面试<b>${d.interviews.pending || 0}</b></div>
-            <div class="stat-card">已录用<b>${d.apps.accepted || 0}</b></div>
+            <button class="stat-card link" onclick="openTab('jobs')">职位总数<b>${d.jobs.total || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('jobs')">在招职位<b>${d.jobs.published || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('jobs')">职位曝光<b>${d.jobs.views || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('apps')">收到投递<b>${d.apps.total || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('interviews')">待面试<b>${d.interviews.pending || 0}</b></button>
+            <button class="stat-card link" onclick="openTab('apps')">已录用<b>${d.apps.accepted || 0}</b></button>
             <div class="stat-card">浏览→投递<b>${d.conversion.viewToApply}%</b></div>
             <div class="stat-card">投递→面试<b>${d.conversion.applyToInterview}%</b></div>
             <div class="stat-card">面试→录用<b>${d.conversion.interviewToHire}%</b></div>
@@ -1849,7 +1849,7 @@ function renderReceived(status) {
         <td class="match truncate" title="${esc(a.match_reasons)}">${esc(a.match_reasons)}</td>
         <td>${badge(statusLabel(a.status), a.status)}</td>
         <td>
-          <button class="tiny" onclick="setAppStatus(${a.id},'viewed')">已查看</button>
+          <button class="tiny" onclick="openResumeDetail(${a.id})">查看简历</button>
           <button class="tiny" onclick="askInterview(${a.id})">邀面试</button>
           <button class="tiny ghost" onclick="setAppStatus(${a.id},'accepted')">录取</button>
           <button class="tiny ghost" onclick="setAppStatus(${a.id},'rejected')">不通过</button>
@@ -1858,6 +1858,60 @@ function renderReceived(status) {
         </td>
       </tr>`).join('')}
     </tbody></table>`;
+}
+
+
+// openResumeDetail：企业端查看候选人完整简历（不自动改状态）
+async function openResumeDetail(appId) {
+  let d;
+  try {
+    d = await api(`/api/applications/${appId}/resume`);   // 拉取简历详情
+  } catch (err) { alert(err.message); return; }
+
+  if (d.candidate === '简历不可见') {                     // 候选人隐藏了简历
+    alert('该候选人未公开简历，只能通过附件或沟通了解');
+    return;
+  }
+
+  const salary = d.expected_salary_min || d.expected_salary_max
+    ? `${d.expected_salary_min || '-'}-${d.expected_salary_max || '-'} 元/月` : '未填写';
+  const mask = document.createElement('div');
+  mask.className = 'chat-mask';
+  mask.id = 'resumeMask';
+  mask.innerHTML = `
+    <div class="chat-box" style="width:720px;max-height:86vh">
+      <div class="chat-head">
+        <b>${esc(d.name || d.seeker_name || '候选人')} 的简历</b>
+        <button class="tiny ghost" onclick="document.getElementById('resumeMask').remove()">关闭</button>
+      </div>
+      <div class="chat-body" style="max-height:none">
+        <p class="match">投递职位：${esc(d.job_title || '-')} · 投递 ${Number(d.apply_count) || 1} 次
+          · 匹配分 ${Number(d.match_score) || 0}</p>
+        <div class="resume-grid">
+          <div><span>学历</span><b>${esc(d.education || '-')}</b></div>
+          <div><span>期望城市</span><b>${esc(d.expected_city || '-')}</b></div>
+          <div><span>期望薪资</span><b>${salary}</b></div>
+          <div><span>到岗时间</span><b>${esc(d.available_time || '-')}</b></div>
+          <div><span>求职状态</span><b>${jobStatusLabel(d.job_status)}</b></div>
+          <div><span>简历开放度</span><b>${esc(d.visibility === 'public' ? '公开' : d.visibility === 'apply_only' ? '仅投递可见' : '隐藏')}</b></div>
+        </div>
+        <h4 class="form-section">技能标签</h4><p>${esc(d.skills || '未填写')}</p>
+        <h4 class="form-section">工作经历</h4><p>${esc(d.experience || '未填写')}</p>
+        <h4 class="form-section">项目经历</h4><p>${esc(d.project_exp || '未填写')}</p>
+        <h4 class="form-section">教育经历</h4><p>${esc(d.edu_exp || '未填写')}</p>
+        <h4 class="form-section">自我评价</h4><p>${esc(d.self_eval || '未填写')}</p>
+        <h4 class="form-section">匹配理由</h4><p class="match">${esc(d.match_reasons || '-')}</p>
+        ${d.attachment_path ? `<h4 class="form-section">简历附件</h4>
+          <p><a class="file" href="/uploads/${encodeURIComponent(d.attachment_path)}" target="_blank" rel="noopener">📎 ${esc(d.attachment_name || d.attachment_path)}</a></p>` : ''}
+      </div>
+      <div class="chat-foot">
+        <button class="tiny" onclick="askInterview(${Number(appId)}); document.getElementById('resumeMask').remove()">邀面试</button>
+        <button class="tiny ghost" onclick="setAppStatus(${Number(appId)},'accepted'); document.getElementById('resumeMask').remove()">录取</button>
+        <button class="tiny ghost" onclick="setAppStatus(${Number(appId)},'rejected'); document.getElementById('resumeMask').remove()">不通过</button>
+        <button class="tiny ghost" onclick="showEvents(${Number(appId)})">投递轨迹</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);                        // 挂载弹窗
 }
 
 // deleteApplication：企业端删除收到的简历（软删除）
