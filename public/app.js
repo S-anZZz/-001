@@ -214,6 +214,21 @@ function showLanding() {
   window.scrollTo(0, 0);
 }
 
+
+// backToIntro：从登录面板返回首页介绍（修复「返回网站介绍」点击无响应）
+function backToIntro(event) {
+  if (event) event.preventDefault();          // 首页隐藏时 #about 锚点无效，改用显式切换
+  const landing = document.getElementById('landingWrap');
+  if (landing) landing.style.display = '';
+  document.body.dataset.view = 'landing';
+  document.getElementById('authWrap').style.display = 'none';
+  document.getElementById('dashWrap').style.display = 'none';
+  const about = document.getElementById('about');
+  window.scrollTo({ top: about ? about.offsetTop : 0, behavior: 'smooth' });
+  if (window.__motionRefresh) setTimeout(() => window.__motionRefresh(), 60);
+  return false;
+}
+
 // openLogin：从首页进入登录面板（修复「让我们一起看看」点了没反应）
 function openLogin(event) {
   if (event) event.preventDefault();           // 阻止 #login 锚点空跳
