@@ -178,11 +178,11 @@ async function logout() {
   token = null; user = null; // 清空内存中的登录状态
   closeChat(); // 退出时关闭会话并阻止在途响应写入
   const landing = document.getElementById('landingWrap');
-  if (landing) landing.style.display = '';       // 退出后回到首页
-  document.body.dataset.view = 'landing';
-  if (window.__motionRefresh) setTimeout(() => window.__motionRefresh(), 30);
-  document.getElementById('authWrap').style.display = 'none';
+  if (landing) landing.style.display = 'none';   // 退出后回到登录界面（而不是网站介绍）
+  document.body.dataset.view = 'auth';
+  document.getElementById('authWrap').style.display = 'block';  // 显示登录面板
   document.getElementById('dashWrap').style.display = 'none';
+  if (window.__motionRefresh) setTimeout(() => window.__motionRefresh(), 30);
   document.getElementById('userBox').style.display = 'none';
   document.getElementById('headerNote').style.display = '';
   switchAuth('login');
