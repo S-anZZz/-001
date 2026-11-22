@@ -117,36 +117,93 @@
   // 1) 逐字文本 + 打字机
   // 收集状态并统一观察，支持在切换视图后重新扫描新出现的元素
   const states = [];
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      const state = states.find((s) => s.element === entry.target);
-      if (state) start(state);
-      entry.target.classList.add('is-visible');
-      observer.unobserve(entry.target);
-    });
-  }, { threshold: 0.18, rootMargin: '0px 0px -8% 0px' });
+  /** 播放：逐字浮现或打字机 */
+  function play(state) {
+    if (state.started) return;
+    start(state);
+  }
 
-  const revealObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      entry.target.classList.add('is-visible');
-      revealObserver.unobserve(entry.target);
+  /** 回退：清空已打的字，恢复初始状态，向上滚动时线条与文字一起收回 */
+  function reset(state) {
+    if (!state.started) return;
+    state.started = false;
+    state.index = 0;
+    clearTimeout(state.timer);
+    state.element.classList.remove('is-visible', 'is-typing', 'typewriter-complete');
+    state.chars.forEach((c) => c.classList.remove('is-typed'));
+  }
+
+  const lineEls = [];
+  let rafPending = false;
+
+  /** 统一的可见性判断：进入视口下部即播放，离开（向上滚出）即回退 */
+  function evaluate() {
+    window.__evalCount = (window.__evalCount || 0) + 1;
+    rafPending = false;
+    try {
+    const vh = window.innerHeight || 800;
+
+    states.forEach((state) => {
+      const rect = state.element.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;      // 隐藏视图内的元素跳过
+      const on = rect.top < vh * 0.88 && rect.bottom > vh * 0.08;
+      const shown = state.element.classList.contains('is-visible');
+      if (on && !shown) {
+        state.element.classList.add('is-visible');
+        play(state);
+      } else if (!on && shown) {
+        state.element.classList.remove('is-visible');
+        reset(state);
+      }
     });
-  }, { threshold: 0.15 });
+
+    lineEls.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) return;
+      const on = rect.top < vh * 0.9 && rect.bottom > vh * 0.05;
+      el.classList.toggle('is-visible', on);
+    });
+
+    document.querySelectorAll('.reveal').forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      el.classList.toggle('is-visible', rect.top < vh * 0.9 && rect.bottom > 0);
+    });
+    } catch (err) { window.__motionErr = String(err && err.message || err); }
+  }
+
+  let lastRun = 0;
+  function schedule() {
+    const now = performance.now();
+    if (now - lastRun < 40) return;   // 轻量节流，避免滚动时频繁重排
+    lastRun = now;
+    evaluate();
+  }
+
+  window.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule, { passive: true });
+  evaluate();                        // 首屏立即评估一次
+
+  // 兜底轮询：某些嵌入环境（iframe / 无头浏览器）不派发 scroll，靠位置变化补上
+  let lastY = window.scrollY;
+  let lastH = window.innerHeight;
+  setInterval(() => {
+    if (window.scrollY === lastY && window.innerHeight === lastH) return;
+    lastY = window.scrollY;
+    lastH = window.innerHeight;
+    evaluate();
+  }, 120);
 
   /** 扫描指定范围内的动效元素（幂等：已处理过的会跳过） */
   function setupScope(root) {
     (root || document).querySelectorAll('[data-motion-text]').forEach((el) => {
-      if (el.dataset.motionReady === '1') {   // 已初始化过，仅重新观察
+      if (el.dataset.motionReady === '1') {   // 已初始化过：仍在观察中则跳过
         const existed = states.find((s) => s.element === el);
-        if (existed && !existed.started) observer.observe(el);
+        if (!existed) states.push(setupText(el));
         return;
       }
       try {
         el.dataset.motionReady = '1';
         states.push(setupText(el));
-        observer.observe(el);
       } catch (e) {
         /* 结构异常时保持原样 */
       }
@@ -156,7 +213,6 @@
       if (el.dataset.revealReady === '1') return;
       el.dataset.revealReady = '1';
       el.classList.add('reveal-ready');
-      revealObserver.observe(el);
     });
   }
 
@@ -165,14 +221,58 @@
   // 供视图切换（登录/工作台）后调用：重新扫描并立即点亮可见内容
   window.__motionRefresh = function refreshMotion() {
     setupScope(document);
-    requestAnimationFrame(() => {
-      states.forEach((s) => {
-        if (s.started) return;
-        const rect = s.element.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight * 0.95) start(s);
-      });
-    });
+    schedule();
   };
+
+
+  // 5) 滚动指示线：下滑自左向右延展；上滑自右向左收拢并消散
+  const rule = document.getElementById('scrollRule');
+  const ghost = document.getElementById('scrollRuleGhost');
+  if (rule) {
+    let lastY = window.scrollY;
+    let ticking = false;
+    let ghostAt = 0;
+
+    const paintRule = () => {
+      ticking = false;
+      const max = Math.max(1, document.body.scrollHeight - window.innerHeight);
+      const p = Math.min(1, Math.max(0, window.scrollY / max));
+      rule.style.transform = `scaleX(${p})`;
+
+      const goingUp = window.scrollY < lastY - 1;   // 向上滚动
+      if (goingUp && ghost && performance.now() - ghostAt > 420) {
+        ghostAt = performance.now();
+        ghost.animate(
+          [
+            { transform: `scaleX(${p})`, opacity: .75 },
+            { transform: 'scaleX(0)', opacity: 0 },
+          ],
+          { duration: 620, easing: 'cubic-bezier(.25,.7,.3,1)', fill: 'forwards' }
+        );
+      }
+      lastY = window.scrollY;
+    };
+
+    window.addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(paintRule);
+    }, { passive: true });
+
+    paintRule();
+  }
+
+  // 6) 介绍页所有分隔线：进入视图自左向右展开，向上滚出时自右向左收回
+  const lineSelector = [
+    '.landing-explore', '.closing-link', '.landing-footer',
+    '.journey-card .journey-foot', '.connection-note', '.paper-rule',
+    '.landing-section-head .rule', '.audience-switch',
+    '.auth-letter-line', 'hr',
+  ].join(', ');
+  document.querySelectorAll(lineSelector).forEach((el) => {
+    el.classList.add('line-draw');
+    lineEls.push(el);
+  });
 
   // 首屏立即可见的内容直接播放（避免等待观察器）
   requestAnimationFrame(() => {
