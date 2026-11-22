@@ -1015,3 +1015,9 @@ body:not([data-view="landing"]) .scroll-rule { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .line-draw::after { transform: scaleX(1); transition: none; }
 }
+
+/* ---------- 收尾区块的粒子加号 ---------- */
+.constellation.has-points .star-fallback { display: none; }
+/* 粒子汇聚的过渡（transform 由 --progress 驱动） */
+.constellation-point { transition: transform .95s cubic-bezier(.2,.7,.3,1), opacity .6s ease; }
+@media (prefers-reduced-motion: reduce) { .constellation-point { transition: none; } }
