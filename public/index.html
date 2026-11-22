@@ -11,9 +11,6 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body data-view="landing">
-  <!-- 首页滚动粒子背景：随滚动收拢成加号，并把底色从白渐变到淡绿 -->
-  <div class="particle-bg" id="particleBg" aria-hidden="true"><canvas id="particleCanvas"></canvas></div>
-  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
   <!-- 无障碍：键盘用户可直接跳到主内容 -->
   <a class="skip-link" href="#mainContent" onclick="event.preventDefault(); document.getElementById('mainContent').focus()">跳到主要内容</a>
 
@@ -171,7 +168,6 @@
     </div>
   </main>
   <!-- 页面逻辑：所有交互都在这里，defer 保证 DOM 就绪后再执行 -->
-  <script src="/landing.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
