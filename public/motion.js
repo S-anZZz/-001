@@ -115,16 +115,8 @@
   }
 
   // 1) 逐字文本 + 打字机
+  // 收集状态并统一观察，支持在切换视图后重新扫描新出现的元素
   const states = [];
-  document.querySelectorAll('[data-motion-text]').forEach((el) => {
-    try {
-      states.push(setupText(el));
-    } catch (e) {
-      /* 结构异常时保持原样 */
-    }
-  });
-
-  // 2) 进入视口时启动
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (!entry.isIntersecting) return;
@@ -135,9 +127,6 @@
     });
   }, { threshold: 0.18, rootMargin: '0px 0px -8% 0px' });
 
-  states.forEach((s) => observer.observe(s.element));
-
-  // 3) 通用 reveal
   const revealObserver = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (!entry.isIntersecting) return;
@@ -146,71 +135,46 @@
     });
   }, { threshold: 0.15 });
 
-  document.querySelectorAll('.reveal').forEach((el) => {
-    el.classList.add('reveal-ready');
-    revealObserver.observe(el);
-  });
-
-
-  // 5) 滚动指示线：下滑自左向右延展；上滑自右向左收拢并消散
-  const rule = document.getElementById('scrollRule');
-  const ghost = document.getElementById('scrollRuleGhost');
-  if (rule) {
-    let lastY = window.scrollY;
-    let ticking = false;
-    let ghostAt = 0;
-
-    const paintRule = () => {
-      ticking = false;
-      const max = Math.max(1, document.body.scrollHeight - window.innerHeight);
-      const p = Math.min(1, Math.max(0, window.scrollY / max));
-      rule.style.transform = `scaleX(${p})`;
-
-      const goingUp = window.scrollY < lastY - 1;   // 向上滚动
-      if (goingUp && ghost && performance.now() - ghostAt > 420) {
-        ghostAt = performance.now();
-        // 拖尾：从当前进度开始，自右向左收拢并淡出
-        ghost.animate(
-          [
-            { transform: `scaleX(${p})`, opacity: .75 },
-            { transform: 'scaleX(0)', opacity: 0 },
-          ],
-          { duration: 620, easing: 'cubic-bezier(.25,.7,.3,1)', fill: 'forwards' }
-        );
+  /** 扫描指定范围内的动效元素（幂等：已处理过的会跳过） */
+  function setupScope(root) {
+    (root || document).querySelectorAll('[data-motion-text]').forEach((el) => {
+      if (el.dataset.motionReady === '1') {   // 已初始化过，仅重新观察
+        const existed = states.find((s) => s.element === el);
+        if (existed && !existed.started) observer.observe(el);
+        return;
       }
-      lastY = window.scrollY;
-    };
+      try {
+        el.dataset.motionReady = '1';
+        states.push(setupText(el));
+        observer.observe(el);
+      } catch (e) {
+        /* 结构异常时保持原样 */
+      }
+    });
 
-    window.addEventListener('scroll', () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(paintRule);
-    }, { passive: true });
-
-    paintRule(); // 初始状态
+    (root || document).querySelectorAll('.reveal').forEach((el) => {
+      if (el.dataset.revealReady === '1') return;
+      el.dataset.revealReady = '1';
+      el.classList.add('reveal-ready');
+      revealObserver.observe(el);
+    });
   }
 
+  setupScope(document);
 
-  // 6) 介绍页所有分隔线：进入视口时自左向右展开
-  const lineSelector = [
-    '.landing-explore', '.closing-link', '.landing-footer',
-    '.journey-card .journey-foot', '.connection-note',
-    '.landing-section-head .rule', '.paper-rule',
-  ].join(', ');
-  const lines = document.querySelectorAll(lineSelector);
-  const lineObserver = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return;
-      entry.target.classList.add('is-visible');
-      lineObserver.unobserve(entry.target);
+  // 供视图切换（登录/工作台）后调用：重新扫描并立即点亮可见内容
+  window.__motionRefresh = function refreshMotion() {
+    setupScope(document);
+    requestAnimationFrame(() => {
+      states.forEach((s) => {
+        if (s.started) return;
+        const rect = s.element.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && rect.top < window.innerHeight * 0.95) start(s);
+      });
     });
-  }, { threshold: 0.2 });
-  lines.forEach((el) => {
-    el.classList.add('line-draw');
-    lineObserver.observe(el);
-  });
+  };
 
-  // 4) 首屏立即可见的内容直接播放（避免等待观察器）
+  // 首屏立即可见的内容直接播放（避免等待观察器）
   requestAnimationFrame(() => {
     states.forEach((s) => {
       const rect = s.element.getBoundingClientRect();

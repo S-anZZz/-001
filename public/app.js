@@ -180,6 +180,7 @@ async function logout() {
   const landing = document.getElementById('landingWrap');
   if (landing) landing.style.display = '';       // 退出后回到首页
   document.body.dataset.view = 'landing';
+  if (window.__motionRefresh) setTimeout(() => window.__motionRefresh(), 30);
   document.getElementById('authWrap').style.display = 'none';
   document.getElementById('dashWrap').style.display = 'none';
   document.getElementById('userBox').style.display = 'none';
@@ -224,6 +225,8 @@ function openLogin(event) {
   window.scrollTo(0, 0);
   const input = document.getElementById('loginUser');
   if (input) setTimeout(() => input.focus({ preventScroll: true }), 60);
+  // 登录面板此前是隐藏的，动效元素需要在显示后重新扫描一次
+  if (window.__motionRefresh) setTimeout(() => window.__motionRefresh(), 30);
 }
 
 // enterDashboard：登录成功后隐藏登录区、展示工作台并渲染页签
