@@ -5,23 +5,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="add work · 在线求职招聘系统：发现合适的职位，遇见合适的人才。">
-  <meta name="theme-color" content="#f7f8f6">
+  <meta name="theme-color" content="#fafaf8">
   <title>add work · 在线求职招聘</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23202522'/%3E%3Cpath d='M20 11v18M11 20h18' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%231c1c1c'/%3E%3Cpath d='M20 11v18M11 20h18' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body data-view="landing">
+  <!-- 首页滚动粒子背景：随滚动收拢成加号，并把底色从白渐变到淡绿 -->
+  <div class="particle-bg" id="particleBg" aria-hidden="true"><canvas id="particleCanvas"></canvas></div>
+  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
   <!-- 无障碍：键盘用户可直接跳到主内容 -->
-  <a class="skip-link" href="#mainContent">跳到主要内容</a>
+  <a class="skip-link" href="#mainContent" onclick="event.preventDefault(); document.getElementById('mainContent').focus()">跳到主要内容</a>
 
   <!-- 顶部导航：品牌区 + 右侧账号信息（登录后由 app.js 填充） -->
   <header class="site-header">
-    <a class="brand" href="/" aria-label="add work 首页">
+    <a class="brand" href="#about" aria-label="add work 网站介绍">
       <span class="mark" aria-hidden="true">+</span>
       <span>add work<span class="brand-dot">.</span></span>
       <small>让合适的人，遇见合适的工作</small>
     </a>
-    <span class="header-note" id="headerNote">你的下一站，从这里开始 <span aria-hidden="true">↗</span></span>
+    <nav class="public-nav" aria-label="网站介绍导航"><a href="#about">关于 add work</a><a href="#features">功能一览</a><a href="#how-it-works">如何开始 <span aria-hidden="true">↗</span></a></nav>
+    <a class="header-note" id="headerNote" href="#about">返回网站介绍 <span aria-hidden="true">↗</span></a>
     <div class="user-box" id="userBox" style="display:none">
       <div class="user-chip">
         <img id="userAvatar" alt="用户头像" style="display:none">
@@ -32,37 +36,79 @@
     </div>
   </header>
 
-  <!-- 主内容区：登录页（authWrap）与工作台（dashWrap）二选一显示 -->
-  <main id="mainContent">
-    <div class="auth-wrap" id="authWrap">
-      <div class="auth-shell">
-        <section class="auth-hero" aria-labelledby="heroTitle">
-          <span class="eyebrow"><span class="status-dot" aria-hidden="true"></span> 为每一份热爱，找到下一站</span>
-          <h1 class="hero-title" id="heroTitle">好工作，<br>从这里<span class="title-emphasis">开始。</span></h1>
-          <p class="hero-desc">不止找到一份工作，更是找到属于你的可能。<br>让求职更简单，让合适的人与机会自然相遇。</p>
-          <div class="match-preview" aria-hidden="true">
-            <div class="preview-person">
-              <span class="preview-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg></span>
-              <div><b>你的热爱与实力</b><span>每一份认真，都值得被看见</span></div>
-            </div>
-            <div class="preview-connection"><span></span><b>双向匹配 <span>↗</span></b><span></span></div>
-            <div class="preview-opportunity">
-              <span class="preview-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="3"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12a20 20 0 0 0 18 0M12 12v4"/></svg></span>
-              <div><b>值得奔赴的机会</b><span>把下一步，交给更好的可能</span></div>
-              <span class="preview-arrow">↗</span>
-            </div>
+  <main id="mainContent" tabindex="-1">
+    <div class="landing" id="landingWrap">
+      <section class="landing-hero" id="about" data-scroll-scene="hero" aria-labelledby="landingTitle">
+        <div class="landing-hero-copy">
+          <p class="landing-eyebrow"><span class="accent-dot" aria-hidden="true"></span> MORE THAN A JOB. A NEW CHAPTER.</p>
+          <h1 id="landingTitle" tabindex="-1" data-motion-text data-typewriter>和优秀的人；<br>做有<span class="future-word">挑战</span>的事</h1>
+          <p class="landing-description" data-motion-text>你不止是一份简历，工作也不止一个职位。<br>在 add work，让你的热爱与才华，<br>遇见值得奔赴的下一站。</p>
+          <a class="landing-explore" href="#features">向下，发现新的可能 <span aria-hidden="true">↓</span></a>
+        </div>
+        <div class="landing-art opportunity-stage" aria-hidden="true">
+          <span class="art-index">A LITTLE COURAGE.<br>A WORLD OF POSSIBILITY.</span>
+          <div class="opportunity-orbit"></div>
+          <div class="opportunity-deck">
+            <div class="opportunity-card talent-card"><span class="paper-kicker">01 / YOUR POTENTIAL</span><span class="paper-avatar">你</span><b>不被一页简历定义。</b><span class="paper-rule"></span><span class="paper-rule short"></span><div class="paper-tags"><span>热爱</span><span>才华</span><span>可能</span></div></div>
+            <div class="opportunity-card future-card"><span class="paper-kicker">02 / YOUR NEXT CHAPTER</span><span class="paper-plus">+</span><b>下一站，<br>不止于想象。</b><span class="paper-bottom">HELLO, FUTURE. <span>↗</span></span></div>
           </div>
-          <div class="hero-features">
-            <div><span>01</span><b>发现机会</b><small>按你的期待，找到好工作</small></div>
-            <div><span>02</span><b>彼此看见</b><small>双向推荐，让匹配更简单</small></div>
-            <div><span>03</span><b>开启下一站</b><small>从投递到面试，进展清晰</small></div>
-          </div>
-        </section>
+          <div class="art-caption"><span>你的故事，值得新的展开。</span><span>01 / 05</span></div>
+        </div>
+        <div class="landing-hero-bottom"><span>为寻找机会的人，也为寻找伙伴的团队。</span><span>向下滚动，让连接发生 <span aria-hidden="true">↓</span></span></div>
+      </section>
 
-        <section class="auth-panel" aria-labelledby="authTitle">
+      <section class="landing-section" id="features" data-scroll-scene aria-labelledby="featuresTitle">
+        <div class="landing-section-head reveal"><div><p class="landing-eyebrow">01 / LESS FRICTION, MORE POSSIBILITY</p><h2 id="featuresTitle" data-motion-text>寻找合拍的搭子，<br>弹奏欢快的乐曲</h2></div><p data-motion-text>把繁琐留给我们。<br>把期待，留给下一次相遇。</p></div>
+        <div class="audience-switch" role="group" aria-label="选择要了解的功能"><button type="button" id="tourSeeker" aria-pressed="true" aria-controls="seekerTour" onclick="switchTour('seeker')">我在寻找工作 <span aria-hidden="true">↗</span></button><button type="button" id="tourCompany" aria-pressed="false" aria-controls="companyTour" onclick="switchTour('company')">我在寻找人才 <span aria-hidden="true">↗</span></button></div>
+        <div class="tour-panel" id="seekerTour" role="region" aria-labelledby="tourSeeker">
+          <ol class="journey-grid">
+            <li class="journey-card"><div class="journey-card-top"><span>01 / BE YOURSELF</span><span aria-hidden="true">↗</span></div><div class="step-drawing resume-drawing" aria-hidden="true"><i></i><span></span><span></span><span></span></div><h3 data-motion-text>展示自己</h3><p data-motion-text>让经历有形，让热爱发声。<br>管理多份简历，自由选择开放度。</p><span class="journey-foot">你的才华，不必千篇一律。</span></li>
+            <li class="journey-card"><div class="journey-card-top"><span>02 / FIND YOUR FIT</span><span aria-hidden="true">↗</span></div><div class="step-drawing search-drawing" aria-hidden="true"><span>技能</span><span>地点</span><span>期待</span></div><h3 data-motion-text>发现机会</h3><p data-motion-text>按地点、薪资与经验筛选，<br>让匹配分与推荐理由，帮你多看一步。</p><span class="journey-foot">合适，比盲目更多一点。</span></li>
+            <li class="journey-card"><div class="journey-card-top"><span>03 / MAKE YOUR MOVE</span><span aria-hidden="true">↗</span></div><div class="step-drawing send-drawing" aria-hidden="true"><span>↗</span></div><h3 data-motion-text>投递简历</h3><p data-motion-text>把一份期待，递向新的可能。<br>跟进投递状态，再开启一次对话。</p><span class="journey-foot">勇敢一点，让故事开始。</span></li>
+          </ol>
+        </div>
+        <div class="tour-panel" id="companyTour" role="region" aria-labelledby="tourCompany" hidden>
+          <ol class="journey-grid">
+            <li class="journey-card"><div class="journey-card-top"><span>01 / SHARE YOUR VISION</span><span aria-hidden="true">+</span></div><div class="step-drawing send-drawing" aria-hidden="true"><span>+</span></div><h3 data-motion-text>让好职位被看见</h3><p data-motion-text>发布与维护职位，刷新、置顶、标记急招。让团队的期待，被更多人看见。</p><span class="journey-foot">好的相遇，从真实的需求开始。</span></li>
+            <li class="journey-card"><div class="journey-card-top"><span>02 / MEET YOUR PEOPLE</span><span aria-hidden="true">↗</span></div><div class="step-drawing search-drawing" aria-hidden="true"><span>技能</span><span>经历</span><span>同频</span></div><h3 data-motion-text>主动找到同路人</h3><p data-motion-text>搜索公开简历，筛选收到的投递。看见履历，也看见每个人的可能。</p><span class="journey-foot">不只等人才来，也向人才走一步。</span></li>
+            <li class="journey-card"><div class="journey-card-top"><span>03 / GROW TOGETHER</span><span aria-hidden="true">↗</span></div><div class="step-drawing resume-drawing" aria-hidden="true"><i></i><span></span><span></span><span></span></div><h3 data-motion-text>让连接走向合作</h3><p data-motion-text>发起聊天、安排面试，跟进候选人状态。让每一次沟通，都有清晰的下一步。</p><span class="journey-foot">下一位伙伴，也许就在这里。</span></li>
+          </ol>
+        </div>
+        <p class="demo-caption">功能示意 · 非真实职位、投递或沟通记录</p>
+      </section>
+
+      <section class="landing-section connection-section" id="connections" data-scroll-scene aria-labelledby="connectionTitle">
+        <div class="connection-copy"><p class="landing-eyebrow">02 / FIND YOUR FREQUENCY</p><h2 id="connectionTitle" data-motion-text>于千万人之中，<br>遇见同频的你。</h2><p data-motion-text>好的连接，不止于技能的交集。<br>也在于一句“你好”之后，<br>愿意相互了解的那一点真诚。</p><span class="connection-note">直接聊天 · 面试邀约 · 双方同意后交换联系方式</span></div>
+        <div class="connection-scene" aria-label="求职者与企业开启对话的功能示意">
+          <span class="connection-line" aria-hidden="true"></span>
+          <div class="connection-person person-seeker"><span class="connection-avatar" aria-hidden="true">你</span><span>寻找机会的人</span><b data-motion-text>我有热爱，<br>也有期待。</b><small>YOUR TALENT</small></div>
+          <span class="connection-join" aria-hidden="true">+</span>
+          <div class="connection-person person-company"><span class="connection-avatar" aria-hidden="true">+</span><span>寻找伙伴的团队</span><b data-motion-text>刚好，<br>我们也在找你。</b><small>YOUR PEOPLE</small></div>
+          <p class="connection-message" data-motion-text>“你好，聊聊新的可能？”</p>
+          <span class="connection-demo">沟通示意</span>
+        </div>
+      </section>
+
+      <section class="landing-section landing-process" id="how-it-works" data-scroll-scene aria-labelledby="processTitle">
+        <div class="landing-section-head reveal"><div><p class="landing-eyebrow">03 / EVERY STEP, IN SIGHT</p><h2 id="processTitle" data-motion-text>少一点不确定，<br>多一点看得见的进展。</h2></div><p data-motion-text>从第一份简历，到下一次见面。<br>每一步进展，都有迹可循。</p></div>
+        <ol class="process-grid"><li class="reveal"><span>01 / JOIN</span><h3 data-motion-text>以真实的你，开始</h3><p data-motion-text>创建求职者或企业账号。<br>企业经管理员审核后开启招聘。</p></li><li class="reveal"><span>02 / SHOW</span><h3 data-motion-text>让期待，有所回应</h3><p data-motion-text>完善简历，或发布招聘职位。<br>查看投递状态与已记录的处理轨迹。</p></li><li class="reveal"><span>03 / CONNECT</span><h3 data-motion-text>给下一步，一个答案</h3><p data-motion-text>沟通职位，确认、改约或拒绝面试。<br>把下一次见面，安排得明明白白。</p></li></ol>
+      </section>
+      <section class="landing-closing" id="closing" data-scroll-scene aria-labelledby="closingTitle"><div class="closing-copy"><p class="landing-eyebrow">04 / SMALL SPARKS, SHARED FUTURES</p><h2 id="closingTitle" data-motion-text>微光汇聚，<br>终成星河。</h2><p data-motion-text>你不必独自发光。<br>让我们一起，找到更辽阔的地方。</p><a class="closing-link" href="#login">从一句“你好”开始 <span aria-hidden="true">↗</span></a></div><div class="constellation" aria-hidden="true"><span class="star-fallback">+</span><span class="constellation-caption">EVERY PERSON ADDS SOMETHING.</span></div><footer class="landing-footer"><span>© ADD WORK / 在线求职招聘</span><a href="/terms.html" target="_blank" rel="noopener">用户协议与隐私政策 ↗</a></footer></section>
+      <a class="landing-cta" href="#login"><span>让我们一起来看看</span><span class="cta-arrow" aria-hidden="true">↗</span></a>
+    </div>
+    <div class="auth-wrap studio-auth" id="authWrap" style="display:none">
+      <div class="auth-shell">
+        <section class="auth-story" aria-labelledby="authStoryTitle">
+          <p class="landing-eyebrow">A HELLO CAN CHANGE EVERYTHING.</p>
+          <h2 id="authStoryTitle" data-motion-text>所有的可能，<br>都始于一次勇敢的<br><span>“你好”</span>。</h2>
+          <p class="auth-story-description" data-motion-text>懂你的才华，更懂你的未来。<br>下一段职业故事，从这里写起。</p>
+          <div class="auth-card-stage opportunity-stage" aria-hidden="true"><div class="auth-letter"><span>TO / YOUR FUTURE</span><b>你好，<br>未来的自己。</b><span class="auth-letter-line"></span><small>每一次出发，都算数。</small><span class="auth-letter-plus">+</span></div><div class="auth-letter-back"><span>ADD<br>WHAT<br>YOU LOVE.</span></div></div>
+          <div class="auth-story-bottom"><span>不止于一份工作。</span><span>ADD WORK / 01</span></div>
+        </section>
+        <section class="auth-panel" id="authPanel" aria-labelledby="authTitle">
           <div class="auth-panel-head">
-            <span class="auth-kicker">YOUR NEXT CHAPTER</span>
-            <h2 id="authTitle">欢迎回来</h2>
+            <span class="auth-kicker"><span class="auth-kicker-line"></span> YOUR NEXT CHAPTER / 01</span>
+            <h1 id="authTitle" tabindex="-1">欢迎回来</h1>
             <p id="authSubtitle">登录 add work，继续你的职业旅程。</p>
           </div>
           <div class="seg" aria-label="账号操作">
@@ -103,7 +149,7 @@
           <p class="auth-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/></svg><span>求职者注册即可使用<br>企业账号审核通过后，即可开启招聘</span></p>
         </section>
       </div>
-      <footer class="auth-footer"><span>add work · 让工作与热爱相遇</span><span>简单一点，离理想更近一点。</span></footer>
+      <footer class="auth-footer"><span>© ADD WORK <span class="footer-separator">/</span> 让工作与热爱相遇</span><a href="/terms.html" target="_blank" rel="noopener">用户协议与隐私政策 ↗</a></footer>
     </div>
 
     <!-- 工作台区（登录后显示）：页签由 app.js 按角色渲染 -->
@@ -125,6 +171,7 @@
     </div>
   </main>
   <!-- 页面逻辑：所有交互都在这里，defer 保证 DOM 就绪后再执行 -->
+  <script src="/landing.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>
