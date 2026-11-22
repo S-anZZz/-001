@@ -177,7 +177,10 @@ async function logout() {
   try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
   token = null; user = null; // 清空内存中的登录状态
   closeChat(); // 退出时关闭会话并阻止在途响应写入
-  document.getElementById('authWrap').style.display = 'block';
+  const landing = document.getElementById('landingWrap');
+  if (landing) landing.style.display = '';       // 退出后回到首页
+  document.body.dataset.view = 'landing';
+  document.getElementById('authWrap').style.display = 'none';
   document.getElementById('dashWrap').style.display = 'none';
   document.getElementById('userBox').style.display = 'none';
   document.getElementById('headerNote').style.display = '';
@@ -199,8 +202,35 @@ function switchAuth(mode) {
   showMsg('');
 }
 
+
+// showLanding / openLogin：首页介绍页与登录页之间的切换
+function showLanding() {
+  const landing = document.getElementById('landingWrap');
+  if (landing) landing.style.display = '';
+  document.body.dataset.view = 'landing';      // 供样式与滚动动效判断当前视图
+  document.getElementById('authWrap').style.display = 'none';
+  document.getElementById('dashWrap').style.display = 'none';
+  window.scrollTo(0, 0);
+}
+
+// openLogin：从首页进入登录面板（修复「让我们一起看看」点了没反应）
+function openLogin(event) {
+  if (event) event.preventDefault();           // 阻止 #login 锚点空跳
+  const landing = document.getElementById('landingWrap');
+  if (landing) landing.style.display = 'none';
+  document.body.dataset.view = 'auth';
+  document.getElementById('authWrap').style.display = 'block';
+  document.getElementById('dashWrap').style.display = 'none';
+  window.scrollTo(0, 0);
+  const input = document.getElementById('loginUser');
+  if (input) setTimeout(() => input.focus({ preventScroll: true }), 60);
+}
+
 // enterDashboard：登录成功后隐藏登录区、展示工作台并渲染页签
 function enterDashboard() {
+  const landing = document.getElementById('landingWrap');
+  if (landing) landing.style.display = 'none';  // 隐藏首页介绍页，避免与工作台叠加
+  document.body.dataset.view = 'app';            // 标记为工作台视图
   document.getElementById('authWrap').style.display = 'none'; // 隐藏登录区
   document.getElementById('dashWrap').style.display = 'block'; // 显示工作台
   document.getElementById('userBox').style.display = 'flex'; // 显示用户信息

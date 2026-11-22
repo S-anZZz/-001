@@ -190,6 +190,26 @@
     paintRule(); // 初始状态
   }
 
+
+  // 6) 介绍页所有分隔线：进入视口时自左向右展开
+  const lineSelector = [
+    '.landing-explore', '.closing-link', '.landing-footer',
+    '.journey-card .journey-foot', '.connection-note',
+    '.landing-section-head .rule', '.paper-rule',
+  ].join(', ');
+  const lines = document.querySelectorAll(lineSelector);
+  const lineObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      entry.target.classList.add('is-visible');
+      lineObserver.unobserve(entry.target);
+    });
+  }, { threshold: 0.2 });
+  lines.forEach((el) => {
+    el.classList.add('line-draw');
+    lineObserver.observe(el);
+  });
+
   // 4) 首屏立即可见的内容直接播放（避免等待观察器）
   requestAnimationFrame(() => {
     states.forEach((s) => {
