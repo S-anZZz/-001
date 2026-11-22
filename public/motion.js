@@ -151,6 +151,45 @@
     revealObserver.observe(el);
   });
 
+
+  // 5) 滚动指示线：下滑自左向右延展；上滑自右向左收拢并消散
+  const rule = document.getElementById('scrollRule');
+  const ghost = document.getElementById('scrollRuleGhost');
+  if (rule) {
+    let lastY = window.scrollY;
+    let ticking = false;
+    let ghostAt = 0;
+
+    const paintRule = () => {
+      ticking = false;
+      const max = Math.max(1, document.body.scrollHeight - window.innerHeight);
+      const p = Math.min(1, Math.max(0, window.scrollY / max));
+      rule.style.transform = `scaleX(${p})`;
+
+      const goingUp = window.scrollY < lastY - 1;   // 向上滚动
+      if (goingUp && ghost && performance.now() - ghostAt > 420) {
+        ghostAt = performance.now();
+        // 拖尾：从当前进度开始，自右向左收拢并淡出
+        ghost.animate(
+          [
+            { transform: `scaleX(${p})`, opacity: .75 },
+            { transform: 'scaleX(0)', opacity: 0 },
+          ],
+          { duration: 620, easing: 'cubic-bezier(.25,.7,.3,1)', fill: 'forwards' }
+        );
+      }
+      lastY = window.scrollY;
+    };
+
+    window.addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(paintRule);
+    }, { passive: true });
+
+    paintRule(); // 初始状态
+  }
+
   // 4) 首屏立即可见的内容直接播放（避免等待观察器）
   requestAnimationFrame(() => {
     states.forEach((s) => {

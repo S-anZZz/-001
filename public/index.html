@@ -11,6 +11,9 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body data-view="landing">
+  <!-- 滚动指示线：下滑自左向右延展，上滑自右向左消散 -->
+  <div class="scroll-rule" id="scrollRule" aria-hidden="true"></div>
+  <div class="scroll-rule scroll-rule-ghost" id="scrollRuleGhost" aria-hidden="true"></div>
   <!-- 无障碍：键盘用户可直接跳到主内容 -->
   <a class="skip-link" href="#mainContent" onclick="event.preventDefault(); document.getElementById('mainContent').focus()">跳到主要内容</a>
 

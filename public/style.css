@@ -968,3 +968,28 @@ html:has(body[data-view="landing"]) { scroll-snap-type: y mandatory; scroll-padd
   .typewriter-ready > .typewriter-cursor { display: none !important; }
   .landing-cta { display: none; }
 }
+
+/* ---------- 滚动指示线：下滑延展、上滑消散 ---------- */
+.scroll-rule {
+  position: fixed;
+  left: 0;
+  top: var(--header-h, 72px);
+  z-index: 55;
+  width: 100%;
+  height: 2px;
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: linear-gradient(90deg, #c9d3bf, #5a6b4f 55%, #2f3a2b);
+  transition: opacity .3s ease;
+  will-change: transform;
+}
+.scroll-rule-ghost {
+  background: linear-gradient(90deg, #5a6b4f, #9fb18d);
+  opacity: 0;
+  z-index: 54;
+}
+body:not([data-view="landing"]) .scroll-rule { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .scroll-rule, .scroll-rule-ghost { display: none; }
+}
