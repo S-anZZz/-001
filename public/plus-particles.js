@@ -101,6 +101,7 @@
   // 兜底轮询：部分嵌入环境不派发 scroll 事件
   let lastY = window.scrollY;
   setInterval(() => {
+    if (document.hidden) return;          // 页面不可见时不计算
     if (window.scrollY === lastY) return;
     lastY = window.scrollY;
     update();

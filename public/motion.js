@@ -138,7 +138,6 @@
 
   /** 统一的可见性判断：进入视口下部即播放，离开（向上滚出）即回退 */
   function evaluate() {
-    window.__evalCount = (window.__evalCount || 0) + 1;
     rafPending = false;
     try {
     const vh = window.innerHeight || 800;
@@ -168,7 +167,7 @@
       const rect = el.getBoundingClientRect();
       el.classList.toggle('is-visible', rect.top < vh * 0.9 && rect.bottom > 0);
     });
-    } catch (err) { window.__motionErr = String(err && err.message || err); }
+    } catch (err) { /* 单个元素异常不影响其它元素 */ }
   }
 
   let lastRun = 0;
@@ -181,17 +180,21 @@
 
   window.addEventListener('scroll', schedule, { passive: true });
   window.addEventListener('resize', schedule, { passive: true });
-  evaluate();                        // 首屏立即评估一次
 
   // 兜底轮询：某些嵌入环境（iframe / 无头浏览器）不派发 scroll，靠位置变化补上
   let lastY = window.scrollY;
   let lastH = window.innerHeight;
   setInterval(() => {
+    if (document.hidden) return;                       // 页面不可见时不计算
     if (window.scrollY === lastY && window.innerHeight === lastH) return;
     lastY = window.scrollY;
     lastH = window.innerHeight;
     evaluate();
+    if (typeof window.__paintRule === 'function') window.__paintRule();  // 顺带推进顶部滚动线
   }, 120);
+
+  // 首屏评估放在线条注册之后，保证首屏的分隔线也能立刻展开
+  evaluate();
 
   /** 扫描指定范围内的动效元素（幂等：已处理过的会跳过） */
   function setupScope(root) {
@@ -259,6 +262,7 @@
       requestAnimationFrame(paintRule);
     }, { passive: true });
 
+    window.__paintRule = paintRule;
     paintRule();
   }
 
@@ -274,11 +278,6 @@
     lineEls.push(el);
   });
 
-  // 首屏立即可见的内容直接播放（避免等待观察器）
-  requestAnimationFrame(() => {
-    states.forEach((s) => {
-      const rect = s.element.getBoundingClientRect();
-      if (rect.top < window.innerHeight * 0.9) start(s);
-    });
-  });
+  // 首屏立即可见的内容直接播放（线条此时已注册完毕）
+  evaluate();
 })();
